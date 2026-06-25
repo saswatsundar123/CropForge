@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cropforge"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open-source, code-first virtual farm runtime for agricultural researchers."
 readme = "README.md"
 license = { text = "MIT" }
@@ -47,7 +47,7 @@ dependencies = [
 dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",
-    "pytest-dash>=2.0",
+    "dash[testing]>=2.17",
 ]
 docs = [
     "mkdocs>=1.5",
@@ -68,9 +68,11 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
 
-[tool.setuptools.packages.find]
-where   = ["."]
-include = ["cropforge*"]
+[tool.setuptools]
+packages = ["cropforge"]
 
 [tool.setuptools.package-data]
-"cropforge.viz" = ["static/*"]
+"cropforge" = ["viz/static/*", "examples/data/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["tests/*", "internal_dev/*", "docs/*"]

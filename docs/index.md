@@ -9,6 +9,8 @@ define, run, and visualise virtual farm experiments as pure Python code.
 
 - **Code-first**: Define crops, fields, and management events in Python — no
   configuration files, no GUIs required.
+- **Opt-In Physics** (v0.2.0): Built-in, mathematically verified FAO-56 ET0 and root impedance physics that seamlessly integrate with custom scripts.
+- **Multi-Field Dashboard** (v0.2.0): Compare divergent physical environments and GxE scenarios directly in the UI with the new Field Selector.
 - **Decoupled architecture**: The time-stepping engine runs headless to
   completion; the visual dashboard reads the Parquet log afterward.
 - **Binary streaming**: Three.js 3D viewport receives Float32Array buffers

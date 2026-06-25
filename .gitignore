@@ -13,6 +13,9 @@ venv/
 *.parquet
 cropforge_output/
 cropforge_crash.log
+dev/
 *.log
 .DS_Store
 Thumbs.db
+site/
+internal_dev/

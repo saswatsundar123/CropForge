@@ -45,5 +45,9 @@ nav:
     - Loaders: reference/loaders.md
     - Logger: reference/logger.md
     - Visualization: reference/viz.md
+  - Features:
+    - Opt-In Physics: features/physics.md
+  - Tutorials:
+    - Maize Dual-Plot: tutorials/maize_dual_plot.md
   - PRD: prd.md
   - Changelog: changelog.md

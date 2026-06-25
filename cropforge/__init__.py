@@ -11,7 +11,7 @@ Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, ...`
 from cropforge.crop import Crop
