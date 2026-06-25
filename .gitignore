@@ -1,0 +1,18 @@
+# .gitignore for CropForge
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.parquet
+cropforge_output/
+cropforge_crash.log
+*.log
+.DS_Store
+Thumbs.db

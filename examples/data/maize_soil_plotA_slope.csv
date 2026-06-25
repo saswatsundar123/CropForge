@@ -1,0 +1,9 @@
+# Soil profile for Plot A — Slope field (CropForge maize_dual_plot.py)
+# Undulating terrain: normal penetration resistance, lower starting nitrogen
+# (simulates nitrogen loss from slope runoff and reduced accumulation)
+# FC = 30.0%  PWP = 13.0%
+# Units: depth cm, moisture %, nitrogen kg/ha, bulk_density g/cm3, pen_resistance MPa
+layer,depth_top_cm,depth_bottom_cm,moisture_pct,n_kg_ha,bulk_density,pen_resistance_mpa
+0,0.0,20.0,25.0,28.0,1.30,0.6
+1,20.0,40.0,22.0,15.0,1.40,0.9
+2,40.0,65.0,18.0,8.0,1.50,1.3

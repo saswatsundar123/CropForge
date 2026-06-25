@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cropforge"
+version = "0.1.0"
+description = "Open-source, code-first virtual farm runtime for agricultural researchers."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Saswat Sundar Rath", email = "saswat@example.com" }
+]
+maintainers = [
+    { name = "Saswat Sundar Rath", email = "saswat@example.com" }
+]
+keywords = [
+    "crop simulation", "agriculture", "farm runtime", "agronomy",
+    "plant science", "virtual farm", "DSSAT", "APSIM"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.12"
+
+# Runtime dependencies (PRD Section 15, Phase 0, step 2)
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pyarrow>=15.0",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "plotly>=5.22",
+    "dash>=2.17",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "pytest-dash>=2.0",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+]
+
+[project.urls]
+Homepage      = "https://github.com/saswat/cropforge"
+Documentation = "https://cropforge.readthedocs.io"
+Repository    = "https://github.com/saswat/cropforge.git"
+"Bug Tracker" = "https://github.com/saswat/cropforge/issues"
+Changelog     = "https://github.com/saswat/cropforge/blob/main/CHANGELOG.md"
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["cropforge*"]
+
+[tool.setuptools.package-data]
+"cropforge.viz" = ["static/*"]

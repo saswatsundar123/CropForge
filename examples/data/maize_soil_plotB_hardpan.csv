@@ -1,0 +1,10 @@
+# Soil profile for Plot B — Hard Pan field (CropForge maize_dual_plot.py)
+# CRITICAL: Layer 1 starts at 19.0cm and has pen_resistance_mpa=3.0 (hard pan).
+# The root impedance engine maps >= 2.5 MPa -> multiplier = 0.0 (blocked).
+# This causes root_depth_cm to be clamped at the 19cm boundary.
+# FC = 30.0%  PWP = 13.0%
+# Units: depth cm, moisture %, nitrogen kg/ha, bulk_density g/cm3, pen_resistance MPa
+layer,depth_top_cm,depth_bottom_cm,moisture_pct,n_kg_ha,bulk_density,pen_resistance_mpa
+0,0.0,19.0,25.0,42.0,1.28,0.5
+1,19.0,35.0,20.0,25.0,1.80,3.0
+2,35.0,60.0,15.0,10.0,1.90,3.5

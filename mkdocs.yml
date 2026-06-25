@@ -1,0 +1,49 @@
+site_name: CropForge
+site_description: Open-source, code-first virtual farm runtime for agricultural researchers
+site_url: https://cropforge.readthedocs.io
+repo_url: https://github.com/saswat/cropforge
+repo_name: saswat/cropforge
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: light-green
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - def_list
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting_started/installation.md
+    - Quickstart: getting_started/quickstart.md
+  - Reference:
+    - Crop: reference/crop.md
+    - Farm & Field: reference/farm.md
+    - Runtime: reference/runtime.md
+    - State: reference/state.md
+    - Loaders: reference/loaders.md
+    - Logger: reference/logger.md
+    - Visualization: reference/viz.md
+  - PRD: prd.md
+  - Changelog: changelog.md
