@@ -45,9 +45,11 @@ nav:
     - Loaders: reference/loaders.md
     - Logger: reference/logger.md
     - Visualization: reference/viz.md
+    - Events: reference/events.md
   - Features:
     - Opt-In Physics: features/physics.md
   - Tutorials:
     - Maize Dual-Plot: tutorials/maize_dual_plot.md
+    - Irrigation Trial & Slope Leaching: tutorials/irrigation_and_leaching.md
   - PRD: prd.md
   - Changelog: changelog.md

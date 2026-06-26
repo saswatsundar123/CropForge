@@ -35,3 +35,26 @@ The core innovation of the Opt-In Physics architecture is the use of negative ph
 User-defined `@farm.step` functions default to `phase=0`. By scheduling the built-in physics solvers at `phase=-2` (Environment) and `phase=-1` (Soil), we guarantee that they execute *before* any of the user's custom plant logic. 
 
 This means a researcher can enable Opt-In Physics and immediately use `state.env.et0_mm` or `plant.root_growth_multiplier` in their `phase=0` custom steps, without altering the execution order or breaking legacy scripts.
+
+## ⚠️ Water Stress Coupling — Manual Wiring Required (v0.2.0)
+
+> **Important for v0.2.0 users.** ET₀ computation and plant stress coupling are **separate concerns**.
+
+In v0.2.0, enabling `use_physics(et0=True)` correctly computes `EnvironmentState.et0_mm` every day using the FAO-56 Penman-Monteith equation. However, **this value does not automatically affect `PlantState.stress_index`**. The engine calculates evapotranspiration demand but does not yet implement a soil water balance to determine how much of that demand is met.
+
+If you need stress coupling in v0.2.0, you must wire it manually in your `@farm.step` function:
+
+```python
+@farm.step(phase=1)
+def compute_stress(state, env):
+    # Manual ET0 → stress wiring (v0.2.0 workaround)
+    # This is a simplified example; use your own empirical coefficients.
+    for plant in state.plants:
+        if env.et0_mm > 0:
+            # Fraction of ET demand unmet (no soil water available yet)
+            unmet_fraction = min(1.0, env.et0_mm / 10.0)
+            plant.stress_index = min(1.0, plant.stress_index + unmet_fraction * 0.05)
+    return state
+```
+
+**This limitation is resolved in v0.3.0** by the Soil Water Balance subsystem, which will automatically close the ET₀ → soil moisture → plant stress loop. When `use_physics(soil_water_balance=True)` is enabled in v0.3.0, `plant.stress_index` will be updated automatically — no manual wiring required.

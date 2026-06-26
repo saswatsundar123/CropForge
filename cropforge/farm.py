@@ -199,6 +199,111 @@ class Field:
         """
         self.soil_profile = soil
 
+    def set_water_params(
+        self,
+        field_capacity_pct: float = 32.0,
+        wilting_point_pct: float = 14.0,
+        saturation_pct: float = 48.0,
+        drainage_coefficient: float = 0.5,
+        crop_coefficient: float = 1.0,
+        stress_increment_per_day: float = 0.05,
+    ) -> None:
+        """Configure soil water balance parameters for this field (PRD v0.3.0 Section 5.2).
+
+        These parameters are stamped into every ``SoilVoxelState.custom`` dict
+        when the field state is initialised at ``farm.run()`` time.  The
+        hydrology hook reads them from there each day.
+
+        Call this method **before** ``farm.run()`` and **after** ``set_soil()``.
+        If called after ``farm.run()`` has started, the parameters will take
+        effect from the next day.
+
+        Parameters
+        ----------
+        field_capacity_pct:
+            Volumetric water content at field capacity (%).
+            Default 32.0 (typical loam soil).
+        wilting_point_pct:
+            Permanent wilting point (%). Plants at this moisture have Ks=0.
+            Default 14.0.
+        saturation_pct:
+            Saturation moisture content (%). Upper ceiling for any layer.
+            Default 48.0.
+        drainage_coefficient:
+            Fraction of excess-above-FC water that drains per day. Default 0.5.
+            Set to 1.0 for free-draining sandy soils, 0.1 for heavy clays.
+        crop_coefficient:
+            Kc value (dimensionless). Multiply ET0 by Kc to get ETc.
+            Default 1.0. Can be a float for a constant Kc or a dict keyed
+            by phenological stage (future extension).
+        stress_increment_per_day:
+            How much ``stress_index`` increases per day at Ks=0 (full stress).
+            Default 0.05 (20 days at full stress drives stress_index to 1.0).
+
+        Notes
+        -----
+        Parameters are stored in ``self._water_params`` and are applied to
+        every voxel's ``custom`` dict whenever ``_init_field_state()`` is
+        called.  They are also applied immediately if the field state has
+        already been initialised (i.e., if called during a multi-phase run).
+        """
+        self._water_params: dict = {
+            "field_capacity_pct":     float(field_capacity_pct),
+            "wilting_point_pct":      float(wilting_point_pct),
+            "saturation_pct":         float(saturation_pct),
+            "drainage_coefficient":   float(drainage_coefficient),
+            "crop_coefficient":       float(crop_coefficient),
+            "stress_increment_per_day": float(stress_increment_per_day),
+        }
+        # If the field state is already initialised, propagate immediately
+        if self._field_state is not None:
+            self._apply_water_params_to_state(self._field_state)
+
+    def _apply_water_params_to_state(self, state: "FieldState") -> None:
+        """Stamp water params into every SoilVoxelState.custom dict."""
+        params = getattr(self, "_water_params", None)
+        if params is None:
+            return
+        for row_soils in state.soil:
+            for cell_soils in row_soils:
+                for voxel in cell_soils:
+                    voxel.custom.update(params)
+
+    def set_nitrogen_params(
+        self,
+        leaching_fraction: float = 0.01,
+        runoff_n_fraction: float = 0.05,
+    ) -> None:
+        """Configure nitrogen transport parameters for this field (PRD v0.3.0 Phase 4).
+
+        Parameters are stamped into every ``SoilVoxelState.custom`` dict at
+        run time so the nutrients hook can read them per-column.
+
+        Parameters
+        ----------
+        leaching_fraction:
+            Fraction of mineral N leached per mm of drainage. Default 0.01.
+            Higher values (0.05) for sandy soils, lower (0.002) for clay.
+        runoff_n_fraction:
+            Fraction of top-layer N exported per mm of lateral runoff. Default 0.05.
+        """
+        self._nitrogen_params: dict = {
+            "leaching_fraction": float(leaching_fraction),
+            "runoff_n_fraction": float(runoff_n_fraction),
+        }
+        if self._field_state is not None:
+            self._apply_nitrogen_params_to_state(self._field_state)
+
+    def _apply_nitrogen_params_to_state(self, state: "FieldState") -> None:
+        """Stamp nitrogen params into every SoilVoxelState.custom dict."""
+        params = getattr(self, "_nitrogen_params", None)
+        if params is None:
+            return
+        for row_soils in state.soil:
+            for cell_soils in row_soils:
+                for voxel in cell_soils:
+                    voxel.custom.update(params)
+
     def set_elevation(self, dem: np.ndarray) -> None:
         """Replace the elevation grid with a custom DEM array.
 
@@ -243,6 +348,9 @@ class Field:
         Called by :class:`Farm` at the start of ``run()``.  If no soil
         profile has been attached, a minimal default (1 layer, all zeros)
         is generated so the field can still be run in skeleton tests.
+
+        Also applies ``_water_params`` to every voxel if ``set_water_params()``
+        has been called before ``run()``.
         """
         plants: List[PlantState] = [
             PlantState(
@@ -289,6 +397,9 @@ class Field:
             elevation_grid=self.elevation_grid.copy(),
             events_fired=[],
         )
+        # Apply water balance parameters to all voxels if configured
+        self._apply_water_params_to_state(self._field_state)
+        self._apply_nitrogen_params_to_state(self._field_state)
         return self._field_state
 
     def __repr__(self) -> str:
@@ -392,16 +503,46 @@ class Farm:
         return list(self._fields)
 
     # ------------------------------------------------------------------
-    # Event management (Section 6.3 — skeleton)
+    # Event management (PRD v0.3.0 Section 4)
     # ------------------------------------------------------------------
 
-    def add_event(self, event: Any) -> None:
-        """Register a management event (irrigation, fertiliser, custom).
+    def add_event(self, event: Any) -> Any:
+        """Register a management event or use as a decorator factory.
 
-        The full ``Event`` class is implemented in Phase 1.  This method
-        stores the event object for execution by the time-stepping loop.
+        This method works in two modes:
+
+        **Direct registration** (irrigation, fertiliser):
+            ``farm.add_event(Event.irrigation(...))``
+            Appends the event to the registry and returns ``None``.
+
+        **Decorator factory** (custom events):
+            Used as ``@farm.add_event(Event.custom(...))`` — in this case
+            the return value is a decorator that attaches the decorated
+            function to the event and then registers it.
+
+            .. code-block:: python
+
+                @farm.add_event(Event.custom(field="Plot_A", day=50))
+                def stress_test(field_state, env_state):
+                    for plant in field_state.plants:
+                        plant.custom["drought_stressed"] = True
+
+        PRD v0.3.0 Section 4.2.
         """
+        from cropforge.events import _CustomEvent
+
+        if isinstance(event, _CustomEvent):
+            # Decorator factory mode: return a function that will attach the
+            # researcher's function to the event and then register the event.
+            def _decorator(fn: Callable) -> Callable:
+                event.attach(fn)
+                self._events.append(event)
+                return fn
+            return _decorator
+
+        # Direct registration mode (irrigation, fertiliser, etc.)
         self._events.append(event)
+        return None
 
     # ------------------------------------------------------------------
     # @farm.step decorator (Section 6.2)
@@ -501,74 +642,111 @@ class Farm:
         self,
         et0: bool = False,
         root_impedance: bool = False,
+        water_balance: bool = False,
+        nutrients: bool = False,
+        lateral_flow: bool = False,
         elevation_m: float = 0.0,
         anemometer_height_m: float = 2.0,
     ) -> None:
-        """Enable opt-in physics engines for this farm (PRD v0.2.0 Section 4/5).
+        """Enable opt-in physics engines for this farm (PRD v0.2.0 / v0.3.0).
 
-        Each engine is registered as a built-in step function at a negative
-        phase, guaranteeing it runs before all researcher ``@farm.step``
-        functions (which are constrained to phase >= 0).
-
-        Execution order when all engines are enabled (PRD v0.2.0 Section 9):
+        Execution order when all engines are enabled:
+            phase=-4  Lateral flow + nitrogen transport
+            phase=-3  Soil water balance engine
             phase=-2  ET0 engine (Penman-Monteith)
             phase=-1  Root impedance engine
             phase= 0  Researcher @farm.step (default phase)
 
-        This method is **idempotent with respect to flag combination** but
-        must only be called once per simulation.  Calling it twice appends
-        duplicate hooks. The typical pattern is::
-
-            farm = Farm(name="Trial", location=(lat, lon))
-            farm.use_physics(et0=True, root_impedance=True)
-
         Parameters
         ----------
         et0:
-            Enable the FAO-56 Penman-Monteith ET0 engine.  When ``True``,
-            ``EnvironmentState.et0_mm`` (and the four intermediate FAO-56
-            fields) are computed and written each day before user steps run.
-            Default ``False`` -- ``et0_mm`` stays at whatever value the
-            weather source provides (or 0.0 from the stub).
+            Enable the FAO-56 Penman-Monteith ET0 engine.
         root_impedance:
-            Enable the root impedance engine.  When ``True``,
-            ``PlantState.root_growth_multiplier`` is set to the impedance
-            multiplier for the soil layer at the plant's current
-            ``root_depth_cm`` each day before user steps run.
-            Default ``False`` -- ``root_growth_multiplier`` stays at 1.0.
+            Enable the root impedance engine.
+        water_balance:
+            Enable the FAO-56 daily soil water balance engine (v0.3.0).
+            **Requires ``et0=True``.**
+        nutrients:
+            Enable vertical N leaching (driven by drainage fluxes). Runs
+            at phase=-4. **Requires ``water_balance=True``** (needs drainage
+            fluxes computed by the water balance hook).
+        lateral_flow:
+            Enable lateral surface runoff N transport between cells.
+            Uses the field ``elevation_grid`` for D8 routing. Activates
+            automatically when ``nutrients=True``; can also be enabled
+            independently to suppress vertical leaching but allow lateral flow.
+            **Requires ``water_balance=True``.**
         elevation_m:
-            Site elevation above mean sea level (m). Used by the ET0 engine
-            for psychrometric constant and clear-sky radiation.  Defaults to
-            0.0 (sea level).  Set this to the field's actual elevation.
+            Site elevation above mean sea level (m). Used by ET0 engine.
         anemometer_height_m:
-            Height of the wind speed anemometer (m). Used by the ET0 engine
-            to apply the logarithmic wind height correction (FAO-56 Eq. 47)
-            when the weather station measures wind at a non-standard height.
-            Default 2.0 m (no correction applied).
+            Anemometer height (m) for wind height correction. Default 2.0 m.
+
+        Raises
+        ------
+        CropForgeConfigError
+            - If ``water_balance=True`` and ``et0=False``.
+            - If ``nutrients=True`` or ``lateral_flow=True`` and
+              ``water_balance=False``.
 
         Notes
         -----
-        The ``latitude_deg`` for the ET0 engine is taken from
-        ``self.location[0]`` (the Farm's latitude coordinate).
-
-        PRD v0.2.0 backward compatibility guarantee:
-            If ``use_physics()`` is never called, no built-in hooks are
-            registered and the simulation behaves identically to v0.1.0.
+        PRD v0.2.0 / v0.3.0 backward compatibility:
+            If ``use_physics()`` is never called, simulation behaves identically
+            to v0.1.0 -- no engine hooks are registered.
         """
         from cropforge.physics.builtin_hooks import (
             PHASE_ET0_ENGINE,
             PHASE_ROOT_ENGINE,
+            PHASE_HYDROLOGY_ENGINE,
+            PHASE_NUTRIENTS_ENGINE,
             make_et0_hook,
             make_root_impedance_hook,
+            make_hydrology_hook,
+            make_nutrients_hook,
         )
+        from cropforge.runtime import CropForgeConfigError
+
+        # --- Validate dependency constraints ---
+        if water_balance and not et0:
+            raise CropForgeConfigError(
+                "use_physics(water_balance=True) requires et0=True. "
+                "Enable ET0 alongside water_balance: "
+                "farm.use_physics(et0=True, water_balance=True)."
+            )
+        if (nutrients or lateral_flow) and not water_balance:
+            raise CropForgeConfigError(
+                "use_physics(nutrients=True) and use_physics(lateral_flow=True) both "
+                "require water_balance=True. The nutrient transport engine reads "
+                "drainage_mm_today which is written by the water balance hook. "
+                "Enable: farm.use_physics(et0=True, water_balance=True, nutrients=True)."
+            )
 
         # Record configuration for introspection
         self._physics_config.update({
             "et0": et0,
             "root_impedance": root_impedance,
+            "water_balance": water_balance,
+            "nutrients": nutrients,
+            "lateral_flow": lateral_flow,
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
         })
+
+        if nutrients or lateral_flow:
+            hook = make_nutrients_hook()
+            self._physics_registry.append((PHASE_NUTRIENTS_ENGINE, hook))
+            logger.info(
+                "Farm %r: Nutrients+lateral-flow engine enabled (phase=%d).",
+                self.name, PHASE_NUTRIENTS_ENGINE,
+            )
+
+        if water_balance:
+            hook = make_hydrology_hook()
+            self._physics_registry.append((PHASE_HYDROLOGY_ENGINE, hook))
+            logger.info(
+                "Farm %r: Soil water balance engine enabled (phase=%d).",
+                self.name, PHASE_HYDROLOGY_ENGINE,
+            )
 
         if et0:
             latitude_deg = self.location[0]
@@ -591,7 +769,7 @@ class Farm:
                 self.name,
             )
 
-        if not et0 and not root_impedance:
+        if not et0 and not root_impedance and not water_balance and not nutrients and not lateral_flow:
             logger.debug(
                 "Farm %r: use_physics() called with all engines disabled -- no-op.",
                 self.name,

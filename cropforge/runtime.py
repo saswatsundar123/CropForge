@@ -40,6 +40,27 @@ logger = logging.getLogger(__name__)
 # Custom exceptions
 # ---------------------------------------------------------------------------
 
+class CropForgeEventError(ValueError):
+    """Re-exported from cropforge.events for convenience.
+
+    Raised when an Event is misconfigured (e.g. interval_days=0).
+    See :class:`cropforge.events.CropForgeEventError`.
+    """
+
+
+class CropForgeConfigError(ValueError):
+    """Raised when conflicting or invalid physics configuration is detected.
+
+    This error is raised at ``farm.run()`` time (or at ``use_physics()`` time
+    for hard conflicts), never at registration time.
+
+    Example
+    -------
+    Enabling ``soil_water_balance`` without ``et0`` raises this error because
+    the water balance depends on ET0 for evapotranspiration demand.
+    """
+
+
 class CropForgeStepError(RuntimeError):
     """Raised when a researcher's step function crashes the simulation run.
 
@@ -183,30 +204,84 @@ def _resolve_environment(field: "Field", day: int) -> "Any":
 
 
 # ---------------------------------------------------------------------------
-# Event firing stub (Section 6.3 — full implementation deferred to loaders)
+# Event validation (called once at the start of farm.run())
 # ---------------------------------------------------------------------------
 
-def _fire_events(farm: "Farm", field: "Field", day: int) -> List[str]:
+def _validate_events(farm: "Farm") -> None:
+    """Validate all registered events before the simulation loop starts.
+
+    Raises ``CropForgeEventError`` if any event has an invalid configuration
+    (e.g. ``interval_days=0``).  This is called at ``farm.run()`` time so
+    researchers see the error immediately, before any work is wasted.
+
+    PRD Section 4.3:
+        'interval_days=0 is invalid and raises ValueError at farm.run() time,
+        not at event registration.'
+    """
+    from cropforge.events import CropForgeEventError as _EventError
+    for event in farm._events:
+        if hasattr(event, "validate"):
+            try:
+                event.validate()
+            except _EventError:
+                raise
+            except Exception as exc:
+                raise _EventError(
+                    f"Event {event!r} failed validation: {exc}"
+                ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Event firing (PRD Section 4.3 — events fire END OF DAY, after all steps)
+# ---------------------------------------------------------------------------
+
+def _fire_events(
+    farm: "Farm",
+    field: "Field",
+    day: int,
+    env: Any,
+) -> List[str]:
     """Fire any events registered for *field* on *day*.
 
-    Returns a list of event names that fired, to be stored in
-    ``FieldState.events_fired``.
+    Called AFTER all step functions for the day have completed.
+    Returns a list of event name strings for the Parquet log.
 
-    Full implementation deferred to Phase 1 Event class.
+    PRD Section 4.3 execution contract:
+        Events fire at end of each day — after phase=-2 (ET0),
+        phase=-1 (root), phase=0 (user steps). State modifications
+        are visible from day+1 onward.
     """
     fired: List[str] = []
+    field_state = field._field_state
+
     for event in farm._events:
-        if hasattr(event, "should_fire") and event.should_fire(field.name, day):
-            try:
-                event.apply(field._field_state, day)
-                fired.append(getattr(event, "name", repr(event)))
-            except Exception:
-                logger.exception(
-                    "Event %r raised an exception on day %d for field %r.",
-                    event,
-                    day,
-                    field.name,
-                )
+        if not (hasattr(event, "should_fire") and event.should_fire(field.name, day)):
+            continue
+        try:
+            event.apply(field_state, env, day)
+            event_name = getattr(event, "name", repr(event))
+            fired.append(event_name)
+            logger.debug(
+                "Event fired: day=%d field=%r event=%r",
+                day, field.name, event_name,
+            )
+
+            # Custom events may return a modified state object.
+            # We detect this via the _last_result attribute.
+            from cropforge.events import _CustomEvent
+            if isinstance(event, _CustomEvent):
+                result = getattr(event, "_last_result", None)
+                if result is not None and hasattr(result, "plants"):
+                    field._field_state = result
+                    field_state = result
+
+        except Exception:
+            logger.exception(
+                "Event %r raised an exception on day %d for field %r. "
+                "Simulation continues.",
+                event, day, field.name,
+            )
+            fired.append(f"{getattr(event, 'name', repr(event))}:ERROR")
     return fired
 
 
@@ -256,6 +331,9 @@ def _execute_run(farm: "Farm", days: int) -> None:
             farm.name,
         )
 
+    # Validate all events before the loop starts (PRD Section 4.3)
+    _validate_events(farm)
+
     # Resolve and validate phase ordering once before the loop
     sorted_steps = farm._sorted_steps()
 
@@ -295,13 +373,11 @@ def _execute_run(farm: "Farm", days: int) -> None:
             # 1. Update day counter
             state.day = day
 
-            # 2. Fire events for this field on this day
-            state.events_fired = _fire_events(farm, field, day)
-
-            # 3. Resolve environment
+            # 2. Resolve environment (before steps so physics hooks can read it)
             env = _resolve_environment(field, day)
 
-            # 4. Execute step functions in phase order
+            # 3. Execute step functions in phase order
+            #    (physics hooks at phase<0, researcher steps at phase>=0)
             for phase_val, step_fn in sorted_steps:
                 try:
                     result = step_fn(state, env)
@@ -348,6 +424,13 @@ def _execute_run(farm: "Farm", days: int) -> None:
                         crash_log_path=crash_path,
                         original_exception=exc,
                     ) from exc
+
+            # 4. Fire events for this field on this day (END OF DAY).
+            #    PRD Section 4.3: events fire AFTER all step functions.
+            #    State changes are visible from day+1 onward.
+            state.events_fired = _fire_events(farm, field, day, env)
+            # Re-fetch state — a custom event may have replaced the object.
+            state = field._field_state
 
             # 5. Record completed timestep to Parquet logger
             state_log.record(field, state, env)
