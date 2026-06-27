@@ -11,14 +11,22 @@ Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, Event, ...`
 from cropforge.crop import Crop
 from cropforge.farm import Farm, Field
 from cropforge.loaders import Soil, Weather
 from cropforge.events import Event, CropForgeEventError
-from cropforge.runtime import CropForgeStepError, CropForgeVisualizeError, CropForgeConfigError
+from cropforge.runtime import CropForgeStepError, CropForgeVisualizeError, CropForgeConfigError, CropForgeStateError
+from cropforge.plugins import (
+    CropPlugin,
+    CropForgePluginError,
+    register_crop,
+    get_plugin,
+    list_plugins,
+)
+from cropforge.compare import compare
 
 __all__ = [
     "Farm",
@@ -27,9 +35,16 @@ __all__ = [
     "Weather",
     "Soil",
     "Event",
+    "CropPlugin",
     "CropForgeEventError",
+    "CropForgePluginError",
     "CropForgeConfigError",
     "CropForgeStepError",
     "CropForgeVisualizeError",
+    "CropForgeStateError",
+    "register_crop",
+    "get_plugin",
+    "list_plugins",
+    "compare",
     "__version__",
 ]

@@ -203,7 +203,176 @@ def _get_impedance_at_depth(soil_column, depth_cm: float, impedance_fn) -> float
 
 def make_hydrology_hook(
     stress_increment_per_day: float = 0.05,
+    lateral_flow: bool = False,
 ):
+    """Return a built-in step function that runs the daily soil water balance.
+
+    Implements the FAO-56 tipping-bucket water balance and closes the
+    ET0 -> soil moisture -> plant stress loop that v0.2.0 left open.
+
+    Phase: ``PHASE_HYDROLOGY_ENGINE`` (-3) -- runs before ET0 (-2) and
+    root impedance (-1).  This guarantees that moisture is updated for
+    today's rainfall before ET0 reads it and before user steps run.
+
+    Per-day execution (PRD v0.3.0 / v0.4.0 Section 5.3):
+        1. Read today's rainfall from ``env.rainfall_mm``.
+        2. [v0.4.0] If lateral_flow=True: read yesterday's
+           ``surface_runoff_mm_today`` from each top-layer voxel, route
+           it downslope via D8, and add the lateral inflow to each cell's
+           effective precipitation before the tipping-bucket runs.
+        3. Apply tipping-bucket drainage cascade (rainfall + lateral inflow).
+        4. Deduct ETc (= ET0 x Kc) from root zone layers.
+        5. Compute Ks for each plant.
+        6. Write Ks to ``plant.custom['water_stress_ks']``.
+        7. Accumulate ``plant.stress_index += (1 - Ks) x stress_increment``.
+        8. Update voxel moisture_pct from the returned layer dicts.
+        9. Write drainage_mm_today and surface_runoff_mm_today to voxel.custom.
+
+    Closure captures
+    ----------------
+    stress_increment_per_day:
+        How much ``stress_index`` increases per day at full stress (Ks=0.0).
+    lateral_flow:
+        When True, route yesterday's surface runoff downslope before running
+        the tipping-bucket, so downslope cells receive additional inflow from
+        uphill neighbours (v0.4.0 Phase 2 -- Lateral Water Accumulation).
+        Gated behind ``farm.use_physics(lateral_flow=True)``.
+
+    PRD v0.3.0/v0.4.0 backward compatibility:
+        This hook is only registered when ``use_physics(water_balance=True)``.
+        Scripts that do not call ``use_physics()`` at all are completely
+        unaffected.
+    """
+    from cropforge.physics.hydrology import (
+        calculate_tipping_bucket,
+        calculate_water_extraction,
+        route_surface_water,
+        DEFAULT_CROP_COEFFICIENT,
+        DEFAULT_STRESS_INCREMENT,
+        DEFAULT_FIELD_CAPACITY_PCT,
+        DEFAULT_WILTING_POINT_PCT,
+        DEFAULT_SATURATION_PCT,
+        DEFAULT_DRAINAGE_COEFFICIENT,
+    )
+
+    def _hydrology_step(
+        state: "FieldState", env: "EnvironmentState"
+    ) -> "FieldState":
+        """Built-in soil water balance engine -- phase=-3."""
+
+        rows = len(state.soil)
+        if rows == 0:
+            return state
+        cols = len(state.soil[0]) if rows > 0 else 0
+
+        # ---- Step 1: Read today's direct rainfall ----
+        rain_mm = max(0.0, env.rainfall_mm)
+
+        # ---- Step 2 (v0.4.0): Compute lateral inflow from yesterday's runoff ----
+        # Read surface_runoff_mm_today written by yesterday's tipping-bucket
+        # and route it downslope via D8. The result is added to each cell's
+        # effective precipitation before today's tipping-bucket runs.
+        lateral_inflow_grid: list = [[0.0] * cols for _ in range(rows)]
+        if lateral_flow:
+            elev = state.elevation_grid.tolist()
+            runoff_grid = [
+                [
+                    state.soil[r][c][0].custom.get("surface_runoff_mm_today", 0.0)
+                    if state.soil[r][c] else 0.0
+                    for c in range(cols)
+                ]
+                for r in range(rows)
+            ]
+            lateral_inflow_grid = route_surface_water(runoff_grid, elev)
+
+            # Log the total lateral redistribution for debugging
+            total_lateral = sum(
+                lateral_inflow_grid[r][c]
+                for r in range(rows) for c in range(cols)
+            )
+            if total_lateral > 0.0:
+                logger.debug(
+                    "Hydrology lateral flow: day=%d total_inflow=%.2f mm across %dx%d grid.",
+                    env.day, total_lateral, rows, cols,
+                )
+
+        # ---- Step 3: Apply tipping-bucket per soil column ----
+        # Each cell gets rain_mm + lateral_inflow from uphill neighbours
+        processed_cells: set = set()
+        for row_idx, row_soils in enumerate(state.soil):
+            for col_idx, cell_soils in enumerate(row_soils):
+                if not cell_soils or (row_idx, col_idx) in processed_cells:
+                    continue
+                processed_cells.add((row_idx, col_idx))
+
+                # Build layer descriptor list
+                layer_dicts = _voxels_to_dicts(cell_soils)
+
+                # Effective precipitation = direct rain + lateral inflow from uphill
+                effective_precip_mm = rain_mm + lateral_inflow_grid[row_idx][col_idx]
+
+                # Apply tipping-bucket (lateral inflow treated as additional precipitation)
+                updated_layers = calculate_tipping_bucket(
+                    layer_dicts,
+                    precipitation_mm=effective_precip_mm,
+                    irrigation_mm=0.0,   # already applied by Event
+                )
+
+                # Write drainage + surface runoff back to voxels
+                _dicts_to_voxels(updated_layers, cell_soils)
+
+                # Store lateral inflow received today for diagnostics / reporting
+                if lateral_flow:
+                    cell_soils[0].custom["lateral_inflow_mm_today"] = (
+                        lateral_inflow_grid[row_idx][col_idx]
+                    )
+
+        # ---- Steps 4-7: Water extraction per plant (root-zone aware) ----
+        for plant in state.plants:
+            if not plant.alive:
+                continue
+
+            cell_soils = state.soil[plant.row][plant.col]
+            if not cell_soils:
+                continue
+
+            layer_dicts = _voxels_to_dicts(cell_soils)
+
+            # Crop coefficient and stress increment may be field-level params
+            kc = cell_soils[0].custom.get("crop_coefficient", DEFAULT_CROP_COEFFICIENT)
+            s_inc = cell_soils[0].custom.get(
+                "stress_increment_per_day", stress_increment_per_day
+            )
+
+            result = calculate_water_extraction(
+                layer_dicts,
+                root_depth_cm=plant.root_depth_cm,
+                et0_demand=env.et0_mm,
+                crop_coefficient=kc,
+            )
+
+            # Write updated moisture back to voxels
+            _dicts_to_voxels(result["layers"], cell_soils)
+
+            # Write Ks to plant state
+            ks = result["ks"]
+            plant.custom["water_stress_ks"] = ks
+
+            # Accumulate stress index
+            stress_delta = (1.0 - ks) * s_inc
+            plant.stress_index = min(1.0, plant.stress_index + stress_delta)
+
+            logger.debug(
+                "Hydrology: day=%d plant=%s ks=%.3f stress_index=%.3f",
+                env.day, plant.plant_id, ks, plant.stress_index,
+            )
+
+        return state
+
+    _hydrology_step.__name__ = "_hydrology_step"
+    return _hydrology_step
+
+
     """Return a built-in step function that runs the daily soil water balance.
 
     Implements the FAO-56 tipping-bucket water balance and closes the

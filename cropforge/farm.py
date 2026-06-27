@@ -171,6 +171,12 @@ class Field:
         # Runtime state — populated by the engine at the start of farm.run()
         self._field_state: Optional[FieldState] = None
 
+        # Plugin list: [(phase, bound_step_method)] — per-field, isolated from other fields
+        self._plugin_steps: List[Tuple[int, Callable]] = []
+
+        # Back-reference to the owning Farm — set by farm.add_field(), used by use_plugin()
+        self._farm: Optional[Any] = None
+
     # ------------------------------------------------------------------
     # Attachment methods (PRD Section 6.1)
     # ------------------------------------------------------------------
@@ -338,6 +344,87 @@ class Field:
             "Field.elevation_from_csv() will be implemented in Phase 1 loaders."
         )
 
+    def use_plugin(self, plugin_cls, phase: int = 0) -> None:
+        """Attach a :class:`~cropforge.plugins.CropPlugin` to this field.
+
+        The plugin's :meth:`~cropforge.plugins.CropPlugin.step` method will be
+        called every simulation day for this field (and *only* this field),
+        at the specified *phase* alongside researcher ``@farm.step`` functions.
+        :meth:`~cropforge.plugins.CropPlugin.on_register` is called exactly
+        once, immediately when this method is invoked.
+
+        Parameters
+        ----------
+        plugin_cls:
+            A subclass of :class:`~cropforge.plugins.CropPlugin` (not an
+            instance — the class itself).  ``use_plugin()`` instantiates it
+            internally so the plugin holds no state shared between fields.
+        phase:
+            Phase at which the plugin step runs.  Default ``0``, same as
+            researcher ``@farm.step`` functions.  Must be a non-negative integer.
+
+        Raises
+        ------
+        CropForgePluginError
+            - If *plugin_cls* is not a subclass of :class:`~cropforge.plugins.CropPlugin`.
+            - If the owning farm's simulation is already running
+              (``farm.run()`` has been called and is in progress).
+        TypeError
+            If *plugin_cls* is an instance rather than a class.
+
+        Examples
+        --------
+        >>> class GrowPlugin(CropPlugin):
+        ...     def step(self, state, env):
+        ...         for plant in state.plants: plant.biomass_g += 1.0
+        ...         return state
+        >>> field.use_plugin(GrowPlugin)
+        """
+        from cropforge.plugins import CropPlugin, CropForgePluginError
+
+        # Guard: must receive a class, not an instance
+        if not isinstance(plugin_cls, type):
+            raise TypeError(
+                f"field.use_plugin() expects a CropPlugin class (not an instance). "
+                f"Did you mean field.use_plugin({type(plugin_cls).__name__}) instead of "
+                f"field.use_plugin({type(plugin_cls).__name__}())?"
+            )
+
+        # Guard: must be a CropPlugin subclass
+        if not issubclass(plugin_cls, CropPlugin):
+            raise CropForgePluginError(
+                f"{plugin_cls.__name__} is not a subclass of CropPlugin. "
+                "Plugin classes must inherit from cropforge.plugins.CropPlugin."
+            )
+
+        # Guard: cannot register a plugin after the simulation has started
+        farm = self._farm
+        if farm is not None and getattr(farm, "_is_running", False):
+            raise CropForgePluginError(
+                f"Cannot register plugin {plugin_cls.__name__!r} after farm.run() "
+                f"has started. Register all plugins before calling farm.run()."
+            )
+
+        # Phase must be non-negative (plugins run after physics engines)
+        if not isinstance(phase, int) or phase < 0:
+            raise ValueError(
+                f"Plugin phase must be a non-negative integer, got {phase!r}."
+            )
+
+        # Instantiate the plugin (each field gets its own instance → isolation)
+        instance = plugin_cls()
+
+        # Call on_register exactly once
+        instance.on_register(farm, self)
+        logger.info(
+            "Plugin %r registered on field %r at phase=%d.",
+            plugin_cls.__name__, self.name, phase,
+        )
+
+        # Store the bound step method tagged with this field's name so the
+        # engine can guard execution to the correct field only.
+        self._plugin_steps.append((phase, instance.step))
+
     # ------------------------------------------------------------------
     # State initialisation (called by the engine at run-time)
     # ------------------------------------------------------------------
@@ -468,6 +555,17 @@ class Farm:
         # Physics configuration snapshot (for introspection / documentation)
         self._physics_config: Dict[str, Any] = {}
 
+        # Runtime guard: True while farm.run() is executing
+        # Used by field.use_plugin() to reject late registrations.
+        self._is_running: bool = False
+
+        # Multi-season tracking (v0.4.0 -- PRD Section 7)
+        # _current_season: stamped onto every EnvironmentState.season during run().
+        # _day_offset: added to per-season day so Parquet days are continuous
+        #   (Season 1 day 1..N → offset=0; Season 2 day 1..M → offset=N → Parquet day N+1..N+M).
+        self._current_season: int = 1
+        self._day_offset: int = 0
+
     # ------------------------------------------------------------------
     # Field management
     # ------------------------------------------------------------------
@@ -495,6 +593,8 @@ class Farm:
                 f"A field named {field.name!r} already exists in farm {self.name!r}. "
                 "Field names must be unique."
             )
+        # Give the field a back-reference to this farm (needed by use_plugin)
+        field._farm = self
         self._fields.append(field)
 
     @property
@@ -598,13 +698,15 @@ class Farm:
 
         return decorator
 
-    def _sorted_steps(self) -> List[Tuple[int, Callable]]:
+    def _sorted_steps(self, field: "Optional[Field]" = None) -> "List[Tuple[int, Callable]]":
         """Return all step functions sorted by phase (ascending).
 
         Merges researcher-registered steps (_step_registry, phase >= 0)
-        with built-in physics hooks (_physics_registry, phase < 0).
-        The negative-phase physics hooks are always guaranteed to appear
-        before any researcher steps in the sorted output.
+        with built-in physics hooks (_physics_registry, phase < 0) and,
+        optionally, field-specific plugin steps (_plugin_steps, phase >= 0).
+
+        Plugin steps are included only when *field* is provided, ensuring
+        that a plugin attached to Field_A never executes for Field_B.
 
         Also emits phase-conflict warnings per PRD Section 6.2.
         Must be called at the start of ``run()``.
@@ -631,7 +733,9 @@ class Farm:
                 )
 
         # Merge physics hooks (negative phases) + researcher steps (non-negative)
-        all_steps = self._physics_registry + self._step_registry
+        # + field plugin steps (non-negative, field-scoped)
+        plugin_steps = field._plugin_steps if field is not None else []
+        all_steps = self._physics_registry + self._step_registry + plugin_steps
         return sorted(all_steps, key=lambda t: t[0])
 
     # ------------------------------------------------------------------
@@ -741,7 +845,7 @@ class Farm:
             )
 
         if water_balance:
-            hook = make_hydrology_hook()
+            hook = make_hydrology_hook(lateral_flow=lateral_flow)
             self._physics_registry.append((PHASE_HYDROLOGY_ENGINE, hook))
             logger.info(
                 "Farm %r: Soil water balance engine enabled (phase=%d).",
@@ -802,6 +906,274 @@ class Farm:
         from cropforge.runtime import CropForgeStepError, _execute_run
 
         _execute_run(self, days)
+
+    # ------------------------------------------------------------------
+    # Multi-season API (v0.4.0 -- PRD Section 7)
+    # ------------------------------------------------------------------
+
+    def save_state(self, path: str) -> None:
+        """Serialise the final SoilState of every field to a .cfstate JSON file.
+
+        PRD v0.4.0 Section 7.4 -- .cfstate file format.
+
+        The file records the soil moisture, nitrogen, and all other SoilVoxelState
+        fields for every cell and layer in every field attached to this farm.
+        Plant state, events, and environment state are NOT saved -- they reset
+        on the next season. Physics engine parameters are NOT saved -- they are
+        re-registered by the researcher's script.
+
+        Parameters
+        ----------
+        path:
+            Destination file path (should end in ``.cfstate``).  Any parent
+            directories will be created automatically.
+
+        Raises
+        ------
+        RuntimeError
+            If ``farm.run()`` has never been called (no soil state exists).
+
+        Examples
+        --------
+        >>> farm.run(days=120)
+        >>> farm.save_state("trial_2026_s1.cfstate")
+        """
+        import json as _json
+        import cropforge as _cf
+        from pathlib import Path as _Path
+
+        _Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+        payload = {
+            "cropforge_version": _cf.__version__,
+            "season": self._current_season,
+            "final_day": self._day_offset,  # total days simulated so far
+            "fields": [],
+        }
+
+        for f in self._fields:
+            if f._field_state is None:
+                raise RuntimeError(
+                    f"Field {f.name!r} has no state yet. Call farm.run() before save_state()."
+                )
+
+            field_entry = {
+                "field_name": f.name,
+                "soil": [],
+            }
+
+            for row_list in f._field_state.soil:
+                for col_list in row_list:
+                    for voxel in col_list:
+                        field_entry["soil"].append({
+                            "row":                    voxel.row,
+                            "col":                    voxel.col,
+                            "layer":                  voxel.layer,
+                            "depth_top_cm":           voxel.depth_top_cm,
+                            "depth_bottom_cm":        voxel.depth_bottom_cm,
+                            "moisture_pct":           voxel.moisture_pct,
+                            "nitrogen_kg_ha":         voxel.nitrogen_kg_ha,
+                            "bulk_density":           voxel.bulk_density,
+                            "penetration_resistance": voxel.penetration_resistance,
+                            "custom":                 voxel.custom,
+                        })
+
+            payload["fields"].append(field_entry)
+
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(payload, fh, indent=2)
+
+        logger.info(
+            "Farm %r: soil state saved to %s (season=%d, final_day=%d, fields=%d).",
+            self.name, path, self._current_season, self._day_offset, len(self._fields),
+        )
+
+    def load_state(self, path: str) -> None:
+        """Restore SoilState from a .cfstate JSON file produced by ``save_state()``.
+
+        PRD v0.4.0 Section 7.6:
+          - Restores moisture, nitrogen, and all SoilVoxelState fields for every
+            cell and layer exactly (float precision preserved as JSON).
+          - Does NOT restore PlantState, Events, or physics config.
+          - Raises ``CropForgeStateError`` if:
+              * ``cropforge_version`` in the file does not match the running version, OR
+              * any ``field_name`` in the file does not match a field attached to this farm.
+
+        Parameters
+        ----------
+        path:
+            Path to a ``.cfstate`` file previously written by ``save_state()``.
+
+        Raises
+        ------
+        CropForgeStateError
+            Version mismatch or field_name mismatch.
+        FileNotFoundError
+            If *path* does not exist.
+        """
+        import json as _json
+        import cropforge as _cf
+        from cropforge.runtime import CropForgeStateError
+        from cropforge.state import SoilVoxelState as _SVS
+
+        with open(path, "r", encoding="utf-8") as fh:
+            data = _json.load(fh)
+
+        # ---- Version check (PRD §7.6) ---------------------------------
+        saved_version = data.get("cropforge_version", "")
+        if saved_version != _cf.__version__:
+            raise CropForgeStateError(
+                path=path,
+                reason=(
+                    f"Version mismatch: file was saved by CropForge {saved_version!r}, "
+                    f"but running CropForge {_cf.__version__!r}."
+                ),
+            )
+
+        # ---- Build lookup: field_name → Field -------------------------
+        field_by_name = {f.name: f for f in self._fields}
+
+        for field_data in data.get("fields", []):
+            fname = field_data["field_name"]
+            if fname not in field_by_name:
+                raise CropForgeStateError(
+                    path=path,
+                    reason=(
+                        f"Field name mismatch: file contains field {fname!r}, "
+                        f"but this farm has fields: {list(field_by_name.keys())}."
+                    ),
+                )
+
+            target_field = field_by_name[fname]
+
+            # If field has no state yet, initialise it now so we can write into it
+            if target_field._field_state is None:
+                target_field._init_field_state(day=1)
+
+            # Build a lookup: (row, col, layer) → voxel object
+            voxel_by_key = {
+                (v.row, v.col, v.layer): v
+                for row_list in target_field._field_state.soil
+                for col_list in row_list
+                for v in col_list
+            }
+
+            for entry in field_data["soil"]:
+                key = (entry["row"], entry["col"], entry["layer"])
+                voxel = voxel_by_key.get(key)
+                if voxel is None:
+                    logger.warning(
+                        "load_state: voxel (%d,%d,%d) not found in field %r -- skipping.",
+                        *key, fname,
+                    )
+                    continue
+
+                # Restore all SoilVoxelState fields exactly
+                voxel.depth_top_cm           = entry["depth_top_cm"]
+                voxel.depth_bottom_cm        = entry["depth_bottom_cm"]
+                voxel.moisture_pct           = entry["moisture_pct"]
+                voxel.nitrogen_kg_ha         = entry["nitrogen_kg_ha"]
+                voxel.bulk_density           = entry["bulk_density"]
+                voxel.penetration_resistance = entry["penetration_resistance"]
+                voxel.custom                 = dict(entry.get("custom", {}))
+
+        # Update season / day tracking from file metadata
+        self._current_season = data.get("season", self._current_season)
+        self._day_offset     = data.get("final_day", self._day_offset)
+
+        logger.info(
+            "Farm %r: soil state loaded from %s (season=%d, day_offset=%d).",
+            self.name, path, self._current_season, self._day_offset,
+        )
+
+    def prepare_next_season(self) -> None:
+        """Advance to the next growing season: reset plants, preserve soil.
+
+        PRD v0.4.0 Section 7.3 -- Multi-Season Carry-over.
+
+        Exactly what carries over vs resets:
+
+        CARRIES OVER (soil physical state):
+            - ``SoilVoxelState.moisture_pct``
+            - ``SoilVoxelState.nitrogen_kg_ha``
+            - ``SoilVoxelState.bulk_density``
+            - ``SoilVoxelState.penetration_resistance``
+            - ``SoilVoxelState.custom`` (all entries)
+            - Physics engine parameters (field_capacity_pct, wilting_point_pct, etc.)
+
+        RESETS (plant / season state):
+            - All ``PlantState`` objects (new sowing — biomass=0, lai=0, stress=0).
+            - ``FieldState.day`` → reset to 1 for the new season's internal counter.
+            - Events: NOT automatically re-registered. The researcher re-registers
+              events for Season 2 using the same @farm.event syntax.
+
+        Day numbering design choice:
+            The new season uses *continuous* day numbers in the Parquet log
+            (if Season 1 ran for 120 days, Season 2 Parquet rows start at day 121).
+            This is implemented via ``_day_offset``.  The ``FieldState.day`` that
+            step functions see is the within-season day (starting at 1), while
+            the Parquet ``day`` column is ``FieldState.day + _day_offset``.
+            This makes multi-season Parquet datasets trivially joinable on a
+            continuous time axis.
+
+        Usage
+        -----
+        >>> farm.run(days=120)           # Season 1
+        >>> farm.save_state("s1.cfstate")
+        >>> farm.prepare_next_season()   # Plants reset, soil carries over
+        >>> farm.run(days=120)           # Season 2 (Parquet days 121-240)
+        """
+        if self._is_running:
+            raise RuntimeError(
+                "prepare_next_season() cannot be called while farm.run() is executing."
+            )
+
+        # Advance season counter and save the total days run so far as the offset
+        self._current_season += 1
+
+        # _day_offset is updated at the END of the previous run() by _execute_run.
+        # If the user calls prepare_next_season() without running first, the offset
+        # stays at 0 (harmless -- Season 2 day 1 is still Parquet day 1).
+
+        # Reset plant grids for all attached fields -- NEW SOWING
+        # Soil is left completely untouched (the voxel objects are reused as-is).
+        from cropforge.state import PlantState as _PS
+
+        for f in self._fields:
+            if f._field_state is None:
+                # Field never ran -- nothing to reset
+                continue
+
+            # Rebuild plant list from scratch (same grid positions, all state = default)
+            f._field_state.plants = [
+                _PS(
+                    plant_id=f"r{r:02d}c{c:02d}",
+                    row=r,
+                    col=c,
+                    # All other fields take dataclass defaults:
+                    #   age_days=0, lai=0.0, biomass_g=0.0, height_cm=0.0,
+                    #   root_depth_cm=0.0, stress_index=0.0, alive=True,
+                    #   phenological_stage="germination", root_growth_multiplier=1.0
+                )
+                for r in range(f.rows)
+                for c in range(f.cols)
+            ]
+
+            # Reset the within-season day counter
+            f._field_state.day = 1
+
+            # Clear events_fired from the previous season
+            f._field_state.events_fired = []
+
+        # Clear the farm-level event list so the researcher re-registers events
+        self._events = []
+
+        logger.info(
+            "Farm %r: prepare_next_season() → season=%d, day_offset=%d. "
+            "Plants reset. Soil state preserved across all %d fields.",
+            self.name, self._current_season, self._day_offset, len(self._fields),
+        )
+
 
     # ------------------------------------------------------------------
     # farm.visualize() (Section 6.5 — pre-flight stub)

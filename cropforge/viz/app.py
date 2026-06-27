@@ -74,6 +74,11 @@ def _load_parquet(log_path: str) -> None:
 
     We use pyarrow's HivePartitioning to decode the path segments back
     into DataFrame columns.
+
+    v0.4.0 — Season column:
+        The environment table now carries a ``season`` (int32) column.
+        Legacy single-season logs do not have this column; we default it
+        to 1 so all downstream code can assume it always exists.
     """
     import pyarrow as pa
     import pyarrow.dataset as ds
@@ -104,6 +109,15 @@ def _load_parquet(log_path: str) -> None:
                     df["day"] = df["day"].astype(int)
                 if "field_name" in df.columns:
                     df["field_name"] = df["field_name"].astype(str)
+
+                # v0.4.0: ensure 'season' column exists in env table.
+                # Legacy logs don't have it; default to 1 so all callbacks work
+                # without an isinstance guard.
+                if table_name == "environment":
+                    if "season" not in df.columns:
+                        df["season"] = 1
+                    else:
+                        df["season"] = df["season"].astype(int)
 
                 key = "env" if table_name == "environment" else table_name
                 _DATA[key] = df
@@ -147,6 +161,31 @@ def _build_daily_metrics(plants_df: pd.DataFrame) -> pd.DataFrame:
     return agg.sort_values("day")
 
 
+def _get_season_boundaries(env_df: pd.DataFrame) -> list:
+    """Return a list of (day, season_number) for each season > 1.
+
+    For each unique season number > 1, find the FIRST day that season
+    appears in the env log. These are the x-axis positions where we draw
+    the vertical boundary line annotated 'Season N Starts'.
+
+    Returns an empty list for single-season or legacy logs.
+    """
+    if env_df is None or env_df.empty:
+        return []
+    if "season" not in env_df.columns:
+        return []
+    seasons = sorted(env_df["season"].unique())
+    if len(seasons) <= 1:
+        return []
+    boundaries = []
+    for s in seasons:
+        if s <= 1:
+            continue
+        first_day = int(env_df[env_df["season"] == s]["day"].min())
+        boundaries.append((first_day, int(s)))
+    return boundaries
+
+
 def _build_daily_soil_metrics(soil_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate topsoil (layer=0) to per-day field means."""
     topsoil = soil_df[soil_df["layer"] == 0]
@@ -160,6 +199,63 @@ def _build_daily_soil_metrics(soil_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     return agg.sort_values("day")
+
+
+def build_csv_export(
+    daily_metrics: pd.DataFrame,
+    daily_soil: pd.DataFrame,
+    env_df: Optional[pd.DataFrame],
+    session_name: str,
+) -> Optional[dict]:
+    """Build a CSV export dict compatible with Dash dcc.Download data format.
+
+    Module-level helper so tests can call it without Dash's callback context.
+    Returns None if daily_metrics is empty.
+
+    Parameters
+    ----------
+    daily_metrics:
+        Aggregated plant metrics (day × field_name).
+    daily_soil:
+        Aggregated topsoil metrics (day × field_name), or empty DataFrame.
+    env_df:
+        Full environment Parquet table (for 'season' column), or None.
+    session_name:
+        Session identifier used in the filename.
+
+    Returns
+    -------
+    dict or None
+        ``{"content": csv_str, "filename": str, "type": "text/csv"}`` or None.
+    """
+    from datetime import datetime, timezone as _tz
+
+    if daily_metrics is None or daily_metrics.empty:
+        return None
+
+    export_df = daily_metrics.copy()
+
+    # Merge soil metrics so the researcher gets the full picture
+    if daily_soil is not None and not daily_soil.empty:
+        export_df = export_df.merge(daily_soil, on=["day", "field_name"], how="left")
+
+    # Attach season column from env table (if available)
+    if env_df is not None and not env_df.empty and "season" in env_df.columns:
+        season_map = (
+            env_df[["day", "field_name", "season"]]
+            .drop_duplicates(subset=["day", "field_name"])
+        )
+        export_df = export_df.merge(season_map, on=["day", "field_name"], how="left")
+        cols = list(export_df.columns)
+        if "season" in cols:
+            cols.remove("season")
+            cols.insert(2, "season")
+            export_df = export_df[cols]
+
+    date_str = datetime.now(_tz.utc).strftime("%Y%m%d")
+    filename = f"cropforge_timeseries_{session_name}_{date_str}.csv"
+    csv_str = export_df.to_csv(index=False)
+    return dict(content=csv_str, filename=filename, type="text/csv")
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +522,26 @@ def create_dash_app(log_path: str):
                     html.Span(f"{n_days} days", style=_STYLE_BADGE),
                     html.Span(f"{n_plants} plants", style=_STYLE_BADGE),
                     html.Span(f"{n_fields} field(s)", style=_STYLE_BADGE),
+                    # v0.4.0 — CSV export button in header (PRD §8.2)
+                    html.Button(
+                        "⬇ Export CSV",
+                        id="export-csv-btn",
+                        n_clicks=0,
+                        style={
+                            "background": "#1e3a5f",
+                            "color": "#4a9eff",
+                            "border": "1px solid #2d5a8e",
+                            "borderRadius": "4px",
+                            "padding": "4px 12px",
+                            "fontSize": "12px",
+                            "cursor": "pointer",
+                            "fontWeight": "600",
+                            "marginLeft": "8px",
+                            "transition": "background 0.2s",
+                        },
+                    ),
+                    # dcc.Download — the actual file-delivery component
+                    dcc.Download(id="download-csv"),
                 ]),
             ]),
 
@@ -653,11 +769,12 @@ def create_dash_app(log_path: str):
         Input("ts-variable-dropdown", "value"),
     )
     def update_timeseries(variable: str):
-        """Panel 2: Multi-field time-series.
+        """Panel 2: Multi-field time-series with season boundary markers.
 
-        Always plots ALL fields on the same chart with distinct colours so
-        the divergence between Plot A (slope) and Plot B (hard pan) is
-        immediately visible — especially for mean_root_depth_cm.
+        Always plots ALL fields on the same chart with distinct colours.
+        v0.4.0: draws a vertical dashed line at the first day of each
+        season > 1 (annotated 'Season N Starts') so multi-season runs are
+        visually clear.  Single-season logs see no change.
         """
         if daily_metrics.empty or variable not in daily_metrics.columns:
             return _empty_figure("No plant data available")
@@ -694,6 +811,22 @@ def create_dash_app(log_path: str):
                 line={"color": colors[i % len(colors)], "width": 2.5},
                 marker={"size": 4},
             ))
+
+        # v0.4.0 — Season boundary vertical lines (PRD §7.5)
+        # Computed from the env table so the boundary is the actual
+        # first Parquet day tagged season > 1, not a synthetic estimate.
+        season_boundaries = _get_season_boundaries(env_df)
+        for boundary_day, season_num in season_boundaries:
+            fig.add_vline(
+                x=boundary_day,
+                line_color="#f59e0b",
+                line_dash="dash",
+                line_width=1.5,
+                opacity=0.7,
+                annotation_text=f"Season {season_num} Starts",
+                annotation_position="top right",
+                annotation_font={"size": 10, "color": "#f59e0b"},
+            )
 
         fig.update_layout(
             **_dark_layout(),
@@ -1106,6 +1239,25 @@ def create_dash_app(log_path: str):
                 ])
 
         return _STYLE_INSPECTOR_OPEN, plant_id, inspector_children, soil_chart
+
+    # ------------------------------------------------------------------
+    # CSV Download callback (PRD v0.4.0 §8.2)
+    # Exports the aggregated daily_metrics DataFrame (all fields, all days)
+    # to a browser-downloadable CSV.  Named following the PRD convention:
+    #   cropforge_timeseries_{session}_{YYYYMMDD}.csv
+    # ------------------------------------------------------------------
+    @app.callback(
+        Output("download-csv", "data"),
+        Input("export-csv-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def download_csv(n_clicks):
+        """Serialise the aggregated time-series data to a CSV download.
+
+        Delegates to the module-level ``build_csv_export()`` helper so that
+        tests can exercise the CSV logic without Dash's callback context.
+        """
+        return build_csv_export(daily_metrics, daily_soil, env_df, session_name)
 
     return app
 

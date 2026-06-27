@@ -15,14 +15,37 @@ farm.visualize()  # Opens http://localhost:7860
 
 ---
 
+## Comparing Farm Runs (v0.4.0)
+
+You can overlay multiple simulation runs onto a single dashboard session using the `compare()` function:
+
+```python
+from cropforge import compare
+
+farm_a.run(days=90)
+farm_b.run(days=90)
+
+compare(farm_a, farm_b)  # Opens http://localhost:7860
+```
+
+`compare()` merges the Parquet logs of all supplied farms and prefixes each field with its farm name (e.g., `"FarmA :: Plot1"`). This allows you to visually compare divergence between entirely different models or parameters directly in the time-series chart.
+
+---
+
 ## Dashboard Panels
 
 | Panel | Description |
 |---|---|
 | **Panel 1: 3D Viewport** | Three.js `InstancedMesh` renderer. Displays all plants colour-coded by a selected variable. Supports click-to-inspect. Day scrubber and playback controls. |
-| **Panel 2: Time-Series** | Plotly line chart of any plant metric over the simulation period. For multi-field sessions, all fields are plotted simultaneously on the same chart for divergence comparison. |
+| **Panel 2: Time-Series** | Plotly line chart of any plant metric over the simulation period. For multi-field sessions, all fields are plotted simultaneously on the same chart for divergence comparison. Multi-season logs display an amber dashed vertical line at season boundaries. Includes a **⬇ Export CSV** button in the header. |
 | **Panel 3: Heatmap** | Spatial plant grid coloured by a selected variable at the current day. |
 | **Panel 4: Farm Inspector** | Per-plant detail panel activated by clicking a plant in the 3D viewport. Shows all metrics, 90-day sparkline history, and soil depth cross-section. |
+
+---
+
+## CSV Data Export (v0.4.0)
+
+The dashboard header includes a **⬇ Export CSV** button. Clicking this compiles the aggregated daily metrics (mean biomass, LAI, alive/dead counts) along with soil data (moisture %, nitrogen kg/ha) for all fields across all days into a single `cropforge_timeseries_{session}_{YYYYMMDD}.csv` file. This data matches the time-series chart exactly and is ready for analysis in pandas, R, or Excel.
 
 ---
 

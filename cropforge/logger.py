@@ -91,6 +91,7 @@ SOIL_SCHEMA = pa.schema([
 ENV_SCHEMA = pa.schema([
     pa.field("day",             pa.int32()),
     pa.field("field_name",      pa.string()),
+    pa.field("season",          pa.int32()),    # v0.4.0 -- multi-season tracking
     pa.field("doy",             pa.int16()),
     pa.field("temp_max_c",      pa.float32()),
     pa.field("temp_min_c",      pa.float32()),
@@ -215,6 +216,7 @@ class StateLogger:
         self._env_rows.append({
             "day":             day,
             "field_name":      field_name,
+            "season":          getattr(env, "season", 1),  # v0.4.0
             "doy":             env.doy,
             "temp_max_c":      env.temp_max_c,
             "temp_min_c":      env.temp_min_c,
@@ -324,7 +326,11 @@ class StateLogger:
         dest = self.output_dir / subdir
         dest.mkdir(parents=True, exist_ok=True)
 
-        # Write partitioned by field_name → day (PRD Section 16.2)
+        # Write partitioned by field_name → day (PRD Section 16.2).
+        # 'season' is stored as a plain data column (not a partition key) so it
+        # remains readable in the returned DataFrame without path-decoding.
+        # Season 1 and Season 2 rows are distinguished by the continuous day
+        # numbers (Season 2 starts at _day_offset + 1), so there is no collision.
         pq.write_to_dataset(
             table,
             root_path=str(dest),

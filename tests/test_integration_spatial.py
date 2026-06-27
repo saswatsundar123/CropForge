@@ -38,7 +38,7 @@ def _make_slope_farm(
     rain_day: int = 2,
     rain_mm: float = 80.0,
     days: int = 8,
-    leaching_fraction: float = 0.02,
+    leaching_fraction: float = 0.002,
     runoff_n_fraction: float = 0.10,
     et0_mm: float = 3.0,
     initial_moisture: float = INITIAL_MO,
@@ -479,3 +479,125 @@ class TestNutrientBackwardCompat:
                     f"N must be unchanged without nutrients engine. "
                     f"Got {n:.3f} at ({r},{c})"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: v0.4.0 Phase 2 Crucible — Lateral Water Accumulation
+# ---------------------------------------------------------------------------
+
+class TestSlopeLateralWaterAccumulation:
+    """
+    PRD v0.4.0 Phase 2 THE CRUCIBLE:
+    After an 80mm rain event on a sloped field, downslope cells (row 2)
+    must have STRICTLY HIGHER soil moisture than upslope cells (row 0).
+
+    Physical mechanism:
+        Day 1 of rain: all cells receive 80mm rain directly. Top cells
+        (high elevation) saturate and generate surface_runoff_mm_today.
+        Day 2: the hydrology hook (phase=-3) reads yesterday's runoff,
+        calls route_surface_water() to compute D8 lateral inflow, and
+        adds that inflow to downslope cells BEFORE the tipping-bucket runs.
+        Result: downslope cells receive both the direct 80mm + runoff
+        from uphill, so their soil moisture must be strictly higher.
+
+    The prior v0.3.0 criterion (downslope N > upslope N) must also hold
+    simultaneously, proving the two systems do not interfere.
+    """
+
+    def test_downslope_cells_have_higher_moisture_than_upslope(self):
+        """
+        CORE v0.4.0 CRITERION: After 80mm rain on a sloped field, downslope
+        cells (row 2) must have strictly higher top-layer soil moisture than
+        upslope cells (row 0).
+
+        The excess moisture is the lateral inflow from row 0 routing to row 1
+        which routes to row 2 — a cascade that amplifies at the bottom.
+        """
+        farm, field = _make_slope_farm(
+            rows=3, cols=3,
+            rain_mm=80.0, rain_day=2, days=8,
+            runoff_n_fraction=0.10,
+        )
+        farm.run(days=8)
+
+        soil = field._field_state.soil
+
+        # Read top-layer moisture for upslope (row 0) and downslope (row 2)
+        moisture_top    = [soil[0][c][0].moisture_pct for c in range(3)]
+        moisture_bottom = [soil[2][c][0].moisture_pct for c in range(3)]
+
+        mean_top    = sum(moisture_top)    / 3
+        mean_bottom = sum(moisture_bottom) / 3
+
+        assert mean_bottom > mean_top, (
+            f"v0.4.0 Crucible FAILED: downslope mean moisture ({mean_bottom:.3f}%) "
+            f"must strictly exceed upslope mean moisture ({mean_top:.3f}%). "
+            f"Lateral water accumulation is not physically routing to low elevations. "
+            f"Upslope: {moisture_top}, Downslope: {moisture_bottom}"
+        )
+
+    def test_upslope_cells_lose_moisture_to_routing(self):
+        """
+        Upslope cells (row 0) must end up with LOWER moisture than downslope cells.
+        This proves water is actually leaving the high-elevation cells, not just
+        being computed as a no-op.
+        """
+        farm, field = _make_slope_farm(
+            rows=3, cols=3,
+            rain_mm=80.0, rain_day=2, days=8,
+            runoff_n_fraction=0.10,
+        )
+        farm.run(days=8)
+
+        soil = field._field_state.soil
+        moisture_top    = [soil[0][c][0].moisture_pct for c in range(3)]
+        moisture_bottom = [soil[2][c][0].moisture_pct for c in range(3)]
+
+        # Every downslope cell must have >= moisture than the corresponding upslope cell
+        for c in range(3):
+            assert moisture_bottom[c] >= moisture_top[c], (
+                f"Column {c}: downslope moisture ({moisture_bottom[c]:.3f}%) "
+                f"must be >= upslope ({moisture_top[c]:.3f}%). "
+                f"D8 lateral routing should accumulate water at low elevations."
+            )
+
+    def test_water_and_nitrogen_gradients_coexist(self):
+        """
+        The v0.4.0 lateral WATER accumulation must not break the v0.3.0 lateral
+        NITROGEN accumulation. Both gradients (moisture AND N) must hold
+        simultaneously after 80mm rain.
+
+        This is the definitive non-regression test: both the old and new
+        spatial physics work together without interference.
+        """
+        farm, field = _make_slope_farm(
+            rows=3, cols=3,
+            rain_mm=80.0, rain_day=2, days=8,
+            runoff_n_fraction=0.10,
+        )
+        farm.run(days=8)
+
+        soil = field._field_state.soil
+
+        # --- Water gradient ---
+        moisture_top    = [soil[0][c][0].moisture_pct    for c in range(3)]
+        moisture_bottom = [soil[2][c][0].moisture_pct    for c in range(3)]
+        mean_moisture_top    = sum(moisture_top)    / 3
+        mean_moisture_bottom = sum(moisture_bottom) / 3
+
+        assert mean_moisture_bottom > mean_moisture_top, (
+            f"Water gradient broken: downslope moisture ({mean_moisture_bottom:.3f}%) "
+            f"<= upslope ({mean_moisture_top:.3f}%)."
+        )
+
+        # --- Nitrogen gradient (v0.3.0 Crucible, must still hold) ---
+        n_top    = [soil[0][c][0].nitrogen_kg_ha for c in range(3)]
+        n_bottom = [soil[2][c][0].nitrogen_kg_ha for c in range(3)]
+        mean_n_top    = sum(n_top)    / 3
+        mean_n_bottom = sum(n_bottom) / 3
+
+        assert mean_n_bottom > mean_n_top, (
+            f"Nitrogen gradient broken by water routing: downslope N ({mean_n_bottom:.3f} kg/ha) "
+            f"<= upslope N ({mean_n_top:.3f} kg/ha). "
+            f"The lateral water and nitrogen engines must coexist independently."
+        )

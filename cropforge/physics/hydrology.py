@@ -229,6 +229,233 @@ def calculate_water_extraction(
     Implements FAO-56 actual evapotranspiration extraction and the stress
     coefficient calculation (Allen et al. 1998, Chapter 8):
 
+        ETc    = ET0 x Kc                    [mm/day]
+        Ks     = (theta_mean - theta_wp) / (theta_fc - theta_wp)  clipped to [0, 1]
+
+    Extraction algorithm:
+        1. Identify active root-zone layers (layers with any depth <= root_depth_cm).
+        2. Distribute ETc uniformly across all active root-zone layers.
+        3. Convert ETc per layer from mm to % volumetric.
+        4. Deduct from each layer; floor at 0.0 (cannot go below zero).
+        5. Compute Ks from the mean moisture of root-zone layers.
+
+    Parameters
+    ----------
+    layers:
+        List of layer descriptor dicts (ordered top -> bottom).
+        Each dict must contain the standard keys plus ``depth_top_cm``
+        and ``depth_bottom_cm``. The function returns *new* dicts.
+    root_depth_cm:
+        Plant rooting depth (cm). Only layers whose top boundary is
+        *below* this depth are in the active root zone. If 0.0 or the
+        root does not reach any layer, uses layer 0 exclusively.
+    et0_demand:
+        Daily reference ET0 (mm). Multiplied by ``crop_coefficient`` to
+        get the actual crop demand ETc.
+    crop_coefficient:
+        Kc value (dimensionless). Default 1.0. Researcher-settable via
+        ``field.set_water_params(crop_coefficient=Kc)``.
+
+    Returns
+    -------
+    dict with keys:
+        ``layers``      - Updated layer descriptors with new moisture values.
+        ``ks``          - Water stress coefficient [0.0, 1.0].
+                          1.0 = no stress (moisture at FC), 0.0 = full stress (at WP).
+        ``etc_mm``      - Actual ETc demanded (mm, before stress reduction).
+        ``extracted_mm``- Water actually removed (mm, may be < ETc if soil is dry).
+
+    Examples
+    --------
+    >>> layers = [{
+    ...     "moisture_pct": 30.0, "field_capacity_pct": 30.0,
+    ...     "wilting_point_pct": 14.0, "saturation_pct": 45.0,
+    ...     "depth_top_cm": 0.0, "depth_bottom_cm": 20.0,
+    ...     "drainage_coefficient": 0.5,
+    ... }]
+    >>> result = calculate_water_extraction(layers, root_depth_cm=20.0, et0_demand=5.0)
+    >>> result["ks"]  # at FC before extraction
+    1.0
+    """
+    if not layers:
+        return {"layers": [], "ks": 1.0, "etc_mm": 0.0, "extracted_mm": 0.0}
+
+    # Work on a copy to avoid mutating inputs
+    updated = [dict(layer) for layer in layers]
+
+    # ---- Step 1: Identify root zone layers ----
+    root_layers = [
+        i for i, L in enumerate(updated)
+        if L["depth_top_cm"] < max(root_depth_cm, 1e-9)
+    ]
+    if not root_layers:
+        # Root not deep enough to reach any layer -- use layer 0 as fallback
+        root_layers = [0]
+
+    # ---- Step 2: Compute ETc and per-layer extraction demand ----
+    etc_mm = et0_demand * crop_coefficient
+    if etc_mm <= 0.0 or not root_layers:
+        # No demand -- compute Ks only
+        pass
+    else:
+        extraction_per_layer_mm = etc_mm / len(root_layers)
+
+        # ---- Steps 3-4: Deduct from each root zone layer ----
+        for i in root_layers:
+            layer = updated[i]
+            depth_cm = layer["depth_bottom_cm"] - layer["depth_top_cm"]
+            extraction_pct = _mm_to_pct(extraction_per_layer_mm, depth_cm)
+            layer["moisture_pct"] = max(0.0, layer["moisture_pct"] - extraction_pct)
+
+    # ---- Step 5: Compute Ks from mean root-zone moisture ----
+    moisture_vals = [updated[i]["moisture_pct"] for i in root_layers]
+    fc_vals       = [updated[i]["field_capacity_pct"] for i in root_layers]
+    wp_vals       = [updated[i]["wilting_point_pct"] for i in root_layers]
+
+    theta_mean = sum(moisture_vals) / len(moisture_vals)
+    theta_fc   = sum(fc_vals)       / len(fc_vals)
+    theta_wp   = sum(wp_vals)       / len(wp_vals)
+
+    fc_wp_range = theta_fc - theta_wp
+    if fc_wp_range <= 0.0:
+        ks = 1.0  # Degenerate soil params -- assume no stress
+    else:
+        ks = (theta_mean - theta_wp) / fc_wp_range
+        ks = max(0.0, min(1.0, ks))
+
+    # ---- Compute actual extracted mm ----
+    extracted_mm = 0.0
+    if etc_mm > 0.0 and root_layers:
+        for i in root_layers:
+            orig = layers[i]["moisture_pct"]
+            new  = updated[i]["moisture_pct"]
+            depth_cm = layers[i]["depth_bottom_cm"] - layers[i]["depth_top_cm"]
+            removed_pct = orig - new
+            extracted_mm += removed_pct * (depth_cm * 10.0) / 100.0
+
+    return {
+        "layers": updated,
+        "ks": ks,
+        "etc_mm": etc_mm,
+        "extracted_mm": extracted_mm,
+    }
+
+
+# ---------------------------------------------------------------------------
+# route_surface_water -- D8 lateral inflow accumulation (v0.4.0 Phase 2)
+# ---------------------------------------------------------------------------
+
+def route_surface_water(
+    surface_runoff_grid: List[List[float]],
+    elevation_grid: List[List[float]],
+) -> List[List[float]]:
+    """Route surface runoff downslope and return the lateral inflow each cell receives.
+
+    Uses the D8 (deterministic-8) steepest-descent routing algorithm:
+    each cell's surface runoff is directed to the single neighbour with the
+    largest elevation drop. The function returns a ``lateral_inflow_grid``
+    representing the millimetres of water flowing *into* each cell from its
+    uphill neighbours.
+
+    This is the water-mass counterpart to the existing nitrogen lateral transport
+    in ``nutrients.py``. Both functions read the same ``surface_runoff_mm_today``
+    values written by ``calculate_tipping_bucket`` but operate independently
+    so that lateral water accumulation can be enabled without nitrogen transport.
+
+    Scientific Basis
+    ----------------
+    Simplified kinematic-wave lateral redistribution (O'Callaghan & Mark 1984
+    D8 single-flow-direction routing). One-timestep lag: runoff generated
+    *today* is added to *tomorrow's* precipitation before the tipping-bucket
+    runs. This matches the v0.3.0 nitrogen lag convention (nutrients hook at
+    phase=-4 reads yesterday's drainage).
+
+    Parameters
+    ----------
+    surface_runoff_grid:
+        2-D list [row][col] of surface runoff leaving each cell (mm). These
+        are the ``surface_runoff_mm_today`` values written by
+        ``calculate_tipping_bucket``. Values must be >= 0.
+    elevation_grid:
+        2-D list [row][col] of cell elevation (m). Higher value = uphill.
+        Must have the same dimensions as ``surface_runoff_grid``.
+
+    Returns
+    -------
+    List[List[float]]
+        2-D list [row][col] of lateral inflow received by each cell (mm).
+        Each entry is the sum of all runoff routed into that cell from
+        upslope neighbours. The sum over all cells equals the sum of all
+        runoff that successfully routed to a lower neighbour (runoff that
+        has no downslope neighbour is lost to the boundary).
+
+    Notes
+    -----
+    - Boundary accumulation: if a cell has no lower neighbour (local sink or
+      edge cell on a flat grid), its runoff is NOT added to any inflow cell.
+    - Conservation: sum(inflow) <= sum(runoff). Equality holds when every
+      cell has at least one lower neighbour.
+    - Units are mm of water depth, consistent with ``calculate_tipping_bucket``
+      inputs and outputs.
+
+    Examples
+    --------
+    >>> runoff = [[5.0, 5.0], [0.0, 0.0]]
+    >>> elev   = [[1.0, 1.0], [0.0, 0.0]]
+    >>> inflow = route_surface_water(runoff, elev)
+    >>> inflow[0][0]   # top cell: no uphill neighbour, receives 0
+    0.0
+    >>> inflow[1][0] > 0.0   # bottom-left receives runoff from top-left
+    True
+    """
+    rows = len(surface_runoff_grid)
+    if rows == 0:
+        return []
+    cols = len(surface_runoff_grid[0])
+
+    # 8 cardinal + diagonal neighbours (D8)
+    _NEIGHBOURS = [
+        (-1, -1), (-1, 0), (-1, 1),
+        ( 0, -1),           ( 0, 1),
+        ( 1, -1), ( 1, 0), ( 1, 1),
+    ]
+
+    # Accumulate inflow received by each cell
+    lateral_inflow: List[List[float]] = [[0.0] * cols for _ in range(rows)]
+
+    for r in range(rows):
+        for c in range(cols):
+            runoff_mm = surface_runoff_grid[r][c]
+            if runoff_mm <= 0.0:
+                continue  # no runoff from this cell
+
+            # Find the steepest downslope neighbour (D8)
+            elev_self = elevation_grid[r][c]
+            best_drop = 0.0
+            best_nr, best_nc = -1, -1
+
+            for dr, dc in _NEIGHBOURS:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    drop = elev_self - elevation_grid[nr][nc]
+                    if drop > best_drop:
+                        best_drop = drop
+                        best_nr, best_nc = nr, nc
+
+            if best_nr == -1:
+                # No lower neighbour -- water ponds at boundary; no inflow credited
+                continue
+
+            # Route all runoff from (r,c) to (best_nr, best_nc)
+            lateral_inflow[best_nr][best_nc] += runoff_mm
+
+    return lateral_inflow
+
+    """Deduct crop water demand from root-zone layers; return stress scalar Ks.
+
+    Implements FAO-56 actual evapotranspiration extraction and the stress
+    coefficient calculation (Allen et al. 1998, Chapter 8):
+
         ETc    = ET0 × Kc                    [mm/day]
         Ks     = (θ_mean - θ_wp) / (θ_fc - θ_wp)  clipped to [0, 1]
 

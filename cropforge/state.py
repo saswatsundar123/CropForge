@@ -141,4 +141,9 @@ class EnvironmentState:
     slope_svp: float = 0.0           # Slope of SVP curve Delta (kPa/degC)
     net_radiation_mj: float = 0.0    # Net radiation Rn (MJ m-2 day-1)
 
+    # v0.4.0 -- multi-season tracking (PRD v0.4.0 Section 7)
+    # Defaults to 1 so all v0.1.0-v0.3.0 scripts run identically.
+    # Set automatically by farm.run() from farm._current_season.
+    season: int = 1
+
     custom: Dict[str, Any] = field(default_factory=dict)
