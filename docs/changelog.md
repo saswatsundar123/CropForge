@@ -6,7 +6,42 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.3.0] — In Development
+## [0.5.0] — 2026-06-28
+
+### Added
+- **Beer-Lambert Radiation Interception Engine** (`cropforge/physics/radiation.py`):
+  `calculate_intercepted_par(solar_rad_mj, lai, k_extinction=0.45)`.
+  Enabled via `farm.use_physics(radiation=True)`. Writes `plant.custom['intercepted_par_mj']`
+  per plant per day. Crucible verified: LAI=3.0, k=0.45, 15 MJ → 5.5557 MJ ±0.001.
+- **Spatial Disease / Pest Pressure Engine** (`cropforge/physics/pathology.py`):
+  Wind-anisotropic SIR grid model. Enabled via `farm.use_physics(disease=True, ...)`.
+  Writes `plant.custom['disease_state']`, `disease_stress`, `days_infected`.
+  Crucible verified: East/West ratio ≥ 2.5× when wind=270° over 20+ days.
+- **StandardWheat plugin** (`cropforge/plugins/wheat.py`):
+  6-stage CERES-Wheat phenology (thermal time), RUE biomass, grain-fill partitioning.
+- **StandardMaize plugin** (`cropforge/plugins/maize.py`):
+  C4 parameters, hard-pan root clamping, water-stress mortality.
+- `cropforge/plugins/` package with `from cropforge.plugins import StandardWheat, StandardMaize`.
+- `field.use_plugin(PluginClass, **kwargs)` — class-based plugin API.
+- `farm.use_physics(radiation=, disease=, k_extinction=, disease_*)` parameters.
+- `examples/wheat_basic_v2.py`, `examples/maize_dual_plot_v2.py` — plugin-edition examples.
+- `examples/disease_outbreak_trial.py` — complete spatial disease scenario.
+- `docs/tutorials/disease_modeling.md` — step-by-step disease engine walkthrough.
+- `docs/features/physics.md` — updated with v0.5.0 Radiation and Disease engines.
+- `.readthedocs.yaml` — ReadTheDocs v2 configuration.
+- 55 new tests (604 total; 1 skipped; 0 failures).
+
+### Changed
+- White Minimal Scientific Dashboard: clean light theme, persistent Farm Inspector, animated preloader.
+- `farm.use_physics()` now accepts `radiation`, `disease`, and all `disease_*` parameters.
+- `pyproject.toml`: version `0.5.0`; added `cropforge.physics` and `cropforge.plugins` packages.
+
+### Breaking Changes
+- `DAY_CHANGE` postMessage now originates from Dash sidebar (not iframe scrubber). Iframe-internal listeners break — see CHANGELOG note in dashboard layer.
+
+---
+
+## [0.4.0] — 2026-06-27
 
 ### Added
 - **Event System** (`cropforge.Event`): `Event.irrigation()`, `Event.fertiliser()`, `Event.custom()` — schedule management actions on specific days or at repeating intervals.

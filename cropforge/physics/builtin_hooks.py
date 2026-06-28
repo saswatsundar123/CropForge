@@ -33,6 +33,7 @@ Licence: MIT
 from __future__ import annotations
 
 import logging
+import random
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -41,11 +42,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Phase constants -- must be negative so they precede all researcher steps
-# PRD v0.3.0 execution order (extended for lateral flow + nutrients):
+# PRD v0.3.0 / v0.5.0 execution order:
 PHASE_NUTRIENTS_ENGINE  = -4   # Lateral flow + N transport (runs before hydrology)
 PHASE_HYDROLOGY_ENGINE  = -3   # Soil water balance (updates moisture)
 PHASE_ET0_ENGINE        = -2   # Penman-Monteith ET0
 PHASE_ROOT_ENGINE       = -1   # Root impedance multiplier
+# v0.5.0 new phases:
+PHASE_RADIATION_ENGINE  = -2   # Radiation interception (same phase as ET0; runs per-plant)
+PHASE_DISEASE_ENGINE    = -1   # Spatial SIR disease spread (same phase as root; per-plant)
 
 
 # ---------------------------------------------------------------------------
@@ -720,3 +724,164 @@ def make_nutrients_hook(
 
     _nutrients_step.__name__ = "_nutrients_step"
     return _nutrients_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 5: Radiation Interception Engine  (PRD v0.5.0 §7)
+# ---------------------------------------------------------------------------
+
+def make_radiation_hook(k_extinction: float = 0.45):
+    """Return a per-plant Beer-Lambert radiation interception hook.
+
+    Runs at ``PHASE_RADIATION_ENGINE`` (-2), alongside ET0. For each living
+    plant it calls ``calculate_intercepted_par()`` using:
+        - ``env.radiation_mj_m2`` as incoming solar radiation
+        - ``plant.lai``
+        - The closure ``k_extinction`` parameter
+
+    Writes the result to ``plant.custom['intercepted_par_mj']``.
+
+    Parameters
+    ----------
+    k_extinction:
+        Beer-Lambert extinction coefficient. Default 0.45 (C3 wheat/rice).
+        Override to 0.50 for C4 crops (maize). Researchers can also set
+        this field-level if they register the hook manually.
+
+    Notes
+    -----
+    PRD §7.3 design note: radiation interception runs per-plant because LAI
+    varies by plant. It writes to plant.custom rather than a top-level
+    EnvironmentState field, keeping the core schema stable.
+
+    Backward compatibility:
+        When this hook is NOT registered (radiation=False), plant.custom
+        will have no 'intercepted_par_mj' key. Plugins that read it must
+        use: plant.custom.get('intercepted_par_mj', 0.0).
+    """
+    from cropforge.physics.radiation import calculate_intercepted_par
+
+    def _radiation_step(
+        state: "FieldState", env: "EnvironmentState"
+    ) -> "FieldState":
+        """Built-in radiation interception engine -- phase=-2."""
+        solar_rad = max(0.0, env.radiation_mj_m2)
+        for plant in state.plants:
+            if not plant.alive:
+                plant.custom["intercepted_par_mj"] = 0.0
+                continue
+            par = calculate_intercepted_par(
+                solar_rad_mj=solar_rad,
+                lai=plant.lai,
+                k_extinction=k_extinction,
+            )
+            plant.custom["intercepted_par_mj"] = par
+
+        logger.debug(
+            "Radiation hook: day=%d solar_rad=%.2f MJ/m2 k=%.3f (%d plants updated).",
+            env.day, solar_rad, k_extinction, len(state.plants),
+        )
+        return state
+
+    _radiation_step.__name__ = "_radiation_step"
+    return _radiation_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 6: Spatial Disease / Pest Pressure Engine  (PRD v0.5.0 §8)
+# ---------------------------------------------------------------------------
+
+def make_disease_hook(
+    initial_foci: list[tuple[int, int]] | None = None,
+    spread_rate: float = 0.15,
+    latency_days: int = 5,
+    stress_increment: float = 0.04,
+    wind_direction_deg: float = 270.0,
+    anisotropy: float = 0.80,
+    seed: int | None = None,
+):
+    """Return a spatially explicit SIR disease spread hook.
+
+    Registered at ``PHASE_DISEASE_ENGINE`` (-1). On each simulation day:
+      1. On day 1 only: seeds the initial infection foci specified by
+         ``initial_foci``.
+      2. Calls ``calculate_disease_spread()`` with the closure parameters
+         and the current day's wind speed (from ``env.wind_speed_ms``).
+
+    Parameters
+    ----------
+    initial_foci:
+        List of (row, col) tuples to infect on the first simulation day.
+        If None, no automatic seeding occurs (manual Event seeding still
+        works via plant.custom['disease_state'] = 'I').
+    spread_rate:
+        Base daily infection probability from each infected cell to each
+        susceptible neighbour (isotropic baseline). Range [0, 1].
+        Default 0.15.
+    latency_days:
+        Days from infection to when the plant becomes infectious (contagious).
+        Default 5 (5-day latency period).
+    stress_increment:
+        Daily disease_stress increment for each infected plant. Default 0.04.
+    wind_direction_deg:
+        Prevailing wind direction in met bearing (0°=N, 90°=E, 180°=S, 270°=W).
+        Direction FROM which wind blows. Default 270.0 (wind from West → blows East).
+    anisotropy:
+        Strength of directional bias. 0=isotropic, 1=fully directional.
+        Default 0.80.
+    seed:
+        Random seed for reproducible spread. If None, non-deterministic.
+
+    Backward compatibility:
+        When this hook is NOT registered (disease=False), all plant.custom
+        dicts have no 'disease_state' key. Code reading disease_state must
+        use: plant.custom.get('disease_state', 'S').
+    """
+    from cropforge.physics.pathology import (
+        calculate_disease_spread,
+        seed_initial_foci,
+    )
+
+    rng = random.Random(seed) if seed is not None else random.Random()
+    foci = list(initial_foci) if initial_foci else []
+    _seeded = [False]  # mutable closure flag
+
+    def _disease_step(
+        state: "FieldState", env: "EnvironmentState"
+    ) -> "FieldState":
+        """Built-in spatial disease spread engine -- phase=-1."""
+        # Rebuild plant_grid from flat list for 2D neighbourhood access
+        rows = len(state.soil)
+        cols = len(state.soil[0]) if rows > 0 else 0
+        plant_grid = [
+            state.plants[r * cols: (r + 1) * cols]
+            for r in range(rows)
+        ]
+
+        # Seed initial foci exactly once (day 1 equivalent)
+        if not _seeded[0] and foci:
+            seed_initial_foci(plant_grid, foci)
+            _seeded[0] = True
+            logger.info(
+                "Disease hook: initial foci seeded at %s.", foci
+            )
+
+        calculate_disease_spread(
+            plant_grid=plant_grid,
+            wind_speed_ms=env.wind_speed_ms,
+            wind_direction_deg=wind_direction_deg,
+            base_infection_rate=spread_rate,
+            latency_days=latency_days,
+            stress_increment=stress_increment,
+            anisotropy=anisotropy,
+            rng=rng,
+        )
+
+        logger.debug(
+            "Disease hook: day=%d wind=%.1f° spread=%.2f",
+            env.day, wind_direction_deg, spread_rate,
+        )
+        return state
+
+    _disease_step.__name__ = "_disease_step"
+    return _disease_step

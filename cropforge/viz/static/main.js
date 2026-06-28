@@ -133,9 +133,20 @@ async function bootstrap(fieldName) {
   initScene();
   showDay(days[0]);
 
-  // Hide loader
+  // Hide iframe loader
   loader.classList.add('hidden');
   setTimeout(() => { loader.style.display = 'none'; }, 650);
+
+  // Notify Dash parent that viewport is fully loaded (PRD v0.5.0 §4.5)
+  // The Dash layout listens for this and hides the Dash-level loading overlay.
+  try {
+    window.parent.postMessage(
+      { type: 'LOAD_COMPLETE', total_days: days.length },
+      window.location.origin
+    );
+  } catch (e) {
+    // cross-origin or no parent — safe to ignore
+  }
 
   // Update legend
   updateLegendMeta();
@@ -167,10 +178,10 @@ function initScene() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   wrapper.appendChild(renderer.domElement);
 
-  // Scene
+  // Scene — bright light background
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0f1a);
-  scene.fog = new THREE.FogExp2(0x0a0f1a, 0.018);
+  scene.background = new THREE.Color(0x9c9c9c);
+  scene.fog = new THREE.FogExp2(0x9c9c9c, 0.016);
 
   // Camera — isometric-ish perspective above the field
   camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 500);
@@ -214,7 +225,7 @@ function initScene() {
   // Grid helper (subtle)
   const grid = new THREE.GridHelper(
     Math.max(fieldW, fieldD) + 4, Math.max(meta.cols, meta.rows) + 2,
-    0x1e2a3a, 0x141d2a
+    0xEAEAEA, 0xF9F9F8
   );
   grid.position.set(fieldW * 0.5 - 0.5, -0.01, fieldD * 0.5 - 0.5);
   scene.add(grid);
@@ -232,7 +243,7 @@ function initScene() {
 function buildGroundPlane(fieldW, fieldD) {
   const geo = new THREE.PlaneGeometry(fieldW + 4, fieldD + 4, 1, 1);
   const mat = new THREE.MeshLambertMaterial({
-    color: 0x1a2c12,
+    color: 0xEAEAEA,
     side: THREE.FrontSide,
   });
   soilMesh = new THREE.Mesh(geo, mat);
@@ -291,8 +302,11 @@ function showDay(day) {
     }
 
     // Build transform: translate to (x, halfH, z), scale (radius, scaleY, radius)
-    dummy.position.set(x, Math.max(halfH, 0.001), z);
-    dummy.scale.set(radius, Math.max(scaleY, 0.001), radius);
+    // Minimum scale enforced so plants are always visible even at Day 1 low-biomass
+    const minScale = 0.05;
+    const minRadius = 0.08;
+    dummy.position.set(x, Math.max(halfH, minScale * 0.5), z);
+    dummy.scale.set(Math.max(radius, minRadius), Math.max(scaleY, minScale), Math.max(radius, minRadius));
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
     mesh.setColorAt(i, colourBuf.setRGB(r, g, b));

@@ -32,7 +32,7 @@ supply. By day 45 you will see a clear divergence in plant stress.
 
 ### Code
 
-The full script is at [`examples/irrigation_trial.py`](../../examples/irrigation_trial.py).
+The full script is at [`examples/irrigation_trial.py`](https://github.com/saswatsundar123/cropforge/blob/main/examples/irrigation_trial.py).
 Here is the critical setup:
 
 ```python
@@ -146,7 +146,7 @@ The D8 routing algorithm moves water — and dissolved nitrogen — downslope.
 
 ### Code
 
-The full script is at [`examples/slope_leaching_trial.py`](../../examples/slope_leaching_trial.py).
+The full script is at [`examples/slope_leaching_trial.py`](https://github.com/saswatsundar123/cropforge/blob/main/examples/slope_leaching_trial.py).
 The critical spatial setup:
 
 ```python

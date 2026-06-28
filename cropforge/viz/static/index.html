@@ -1,16 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CropForge 3D Viewport</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
     body {
-      background: #0a0f1a;
-      color: #e2e8f0;
-      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #EAEAEA;
+      color: #111111;
+      font-family: 'SF Pro Display', 'Geist Sans', 'Helvetica Neue', sans-serif;
       overflow: hidden;
       width: 100vw;
       height: 100vh;
@@ -19,7 +24,7 @@
     #loader {
       position: absolute;
       inset: 0;
-      background: #0a0f1a;
+      background: #9c9c9c;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -27,42 +32,52 @@
       z-index: 100;
       transition: opacity 0.6s ease;
     }
-    #loader.hidden { opacity: 0; pointer-events: none; }
+
+    #loader.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
 
     #loader-title {
       font-size: 15px;
       font-weight: 700;
-      letter-spacing: 0.15em;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: #4a9eff;
+      color: #111111;
       margin-bottom: 24px;
     }
+
     #loader-bar-track {
       width: 260px;
-      height: 4px;
-      background: #1a2332;
+      height: 3px;
+      background: #EAEAEA;
       border-radius: 4px;
       overflow: hidden;
     }
+
     #loader-bar-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #4a9eff, #34d399);
+      background: #111111;
       border-radius: 4px;
       transition: width 0.15s ease;
     }
+
     #loader-status {
       margin-top: 12px;
-      font-size: 12px;
-      color: #4a5568;
-      font-family: monospace;
+      font-size: 11px;
+      color: #787774;
+      font-family: 'Geist Mono', 'SF Mono', monospace;
     }
 
     #canvas-wrapper {
       position: absolute;
       inset: 0;
     }
-    canvas { display: block; }
+
+    canvas {
+      display: block;
+    }
 
     /* HUD overlay */
     #hud {
@@ -72,23 +87,27 @@
       pointer-events: none;
       z-index: 10;
     }
+
     #hud-day {
       font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      color: #4a9eff;
-      background: rgba(10,15,26,0.75);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #346538;
+      background: #EDF3EC;
       padding: 4px 10px;
-      border-radius: 4px;
-      border: 1px solid #1e2a3a;
+      border-radius: 9999px;
+      border: none;
     }
+
     #hud-info {
-      font-size: 10px;
-      color: #64748b;
-      margin-top: 4px;
-      background: rgba(10,15,26,0.75);
+      font-size: 11px;
+      color: #787774;
+      margin-top: 6px;
+      background: #FFFFFF;
       padding: 4px 10px;
       border-radius: 4px;
+      border: 1px solid #EAEAEA;
     }
 
     /* Colour legend */
@@ -100,17 +119,20 @@
       pointer-events: none;
       z-index: 10;
     }
+
     #legend-title {
       font-size: 10px;
       color: #64748b;
       text-align: center;
       margin-bottom: 4px;
     }
+
     #legend-bar {
       height: 8px;
       border-radius: 4px;
       background: linear-gradient(90deg, #d4a60a, #2e8b57);
     }
+
     #legend-labels {
       display: flex;
       justify-content: space-between;
@@ -119,6 +141,7 @@
       margin-top: 2px;
       font-family: monospace;
     }
+
     #legend-dead {
       display: flex;
       align-items: center;
@@ -127,8 +150,10 @@
       font-size: 10px;
       color: #64748b;
     }
+
     #legend-dead-swatch {
-      width: 12px; height: 12px;
+      width: 12px;
+      height: 12px;
       border-radius: 2px;
       background: #8B6914;
       flex-shrink: 0;
@@ -144,25 +169,40 @@
       gap: 8px;
       pointer-events: auto;
       z-index: 10;
-      background: rgba(10,15,26,0.85);
-      border: 1px solid #1e2a3a;
+      background: #FFFFFF;
+      border: 1px solid #EAEAEA;
       border-radius: 8px;
       padding: 8px 16px;
       align-items: center;
+      box-shadow: none;
     }
+
     #controls button {
-      background: #1a2332;
-      color: #94a3b8;
-      border: 1px solid #2d3748;
+      background: #FFFFFF;
+      color: #787774;
+      border: 1px solid #EAEAEA;
       border-radius: 4px;
       padding: 4px 10px;
       font-size: 11px;
       cursor: pointer;
       transition: all 0.15s;
     }
-    #controls button:hover { background: #243044; color: #e2e8f0; }
-    #controls button.active { background: #1e3a5f; color: #4a9eff; border-color: #4a9eff; }
-    #speed-label { font-size: 11px; color: #64748b; }
+
+    #controls button:hover {
+      background: #F9F9F8;
+      color: #111111;
+    }
+
+    #controls button.active {
+      background: #111111;
+      color: #FFFFFF;
+      border-color: #111111;
+    }
+
+    #speed-label {
+      font-size: 11px;
+      color: #4B5563;
+    }
 
     /* Colour variable select */
     #var-select-wrap {
@@ -171,17 +211,20 @@
       right: 10px;
       z-index: 10;
     }
+
     #var-select {
-      background: #1a2332;
-      color: #e2e8f0;
-      border: 1px solid #2d3748;
+      background: #FFFFFF;
+      color: #111111;
+      border: 1px solid #EAEAEA;
       border-radius: 4px;
       padding: 4px 8px;
       font-size: 11px;
       cursor: pointer;
+      box-shadow: none;
     }
   </style>
 </head>
+
 <body>
 
   <!-- Loading screen -->
@@ -247,4 +290,5 @@
   <script type="module" src="main.js"></script>
 
 </body>
+
 </html>

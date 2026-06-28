@@ -344,7 +344,7 @@ class Field:
             "Field.elevation_from_csv() will be implemented in Phase 1 loaders."
         )
 
-    def use_plugin(self, plugin_cls, phase: int = 0) -> None:
+    def use_plugin(self, plugin_cls: type, phase: int = 0, **kwargs) -> None:
         """Attach a :class:`~cropforge.plugins.CropPlugin` to this field.
 
         The plugin's :meth:`~cropforge.plugins.CropPlugin.step` method will be
@@ -362,6 +362,8 @@ class Field:
         phase:
             Phase at which the plugin step runs.  Default ``0``, same as
             researcher ``@farm.step`` functions.  Must be a non-negative integer.
+        **kwargs:
+            Additional keyword arguments passed to the plugin_cls constructor.
 
         Raises
         ------
@@ -412,7 +414,7 @@ class Field:
             )
 
         # Instantiate the plugin (each field gets its own instance → isolation)
-        instance = plugin_cls()
+        instance = plugin_cls(**kwargs)
 
         # Call on_register exactly once
         instance.on_register(farm, self)
@@ -749,16 +751,30 @@ class Farm:
         water_balance: bool = False,
         nutrients: bool = False,
         lateral_flow: bool = False,
+        radiation: bool = False,
+        disease: bool = False,
         elevation_m: float = 0.0,
         anemometer_height_m: float = 2.0,
+        # Radiation engine parameters
+        k_extinction: float = 0.45,
+        # Disease engine parameters
+        disease_foci: list | None = None,
+        disease_spread_rate: float = 0.15,
+        disease_latency_days: int = 5,
+        disease_stress_increment: float = 0.04,
+        disease_wind_direction_deg: float = 270.0,
+        disease_anisotropy: float = 0.80,
+        disease_seed: int | None = None,
     ) -> None:
-        """Enable opt-in physics engines for this farm (PRD v0.2.0 / v0.3.0).
+        """Enable opt-in physics engines for this farm (PRD v0.2.0 / v0.3.0 / v0.5.0).
 
         Execution order when all engines are enabled:
             phase=-4  Lateral flow + nitrogen transport
             phase=-3  Soil water balance engine
             phase=-2  ET0 engine (Penman-Monteith)
+            phase=-2  Radiation interception engine (same phase, per-plant)
             phase=-1  Root impedance engine
+            phase=-1  Spatial disease spread engine (same phase, per-plant)
             phase= 0  Researcher @farm.step (default phase)
 
         Parameters
@@ -780,10 +796,36 @@ class Farm:
             automatically when ``nutrients=True``; can also be enabled
             independently to suppress vertical leaching but allow lateral flow.
             **Requires ``water_balance=True``.**
+        radiation:
+            Enable the Beer-Lambert radiation interception engine (v0.5.0).
+            Writes ``plant.custom['intercepted_par_mj']`` for every plant
+            each day. Gated: no effect when False.
+        disease:
+            Enable the spatially explicit SIR disease spread engine (v0.5.0).
+            See ``disease_*`` parameters for configuration.
         elevation_m:
             Site elevation above mean sea level (m). Used by ET0 engine.
         anemometer_height_m:
             Anemometer height (m) for wind height correction. Default 2.0 m.
+        k_extinction:
+            Beer-Lambert extinction coefficient for the radiation engine.
+            Default 0.45 (C3 crops). Use 0.50 for C4 (maize).
+        disease_foci:
+            List of (row, col) tuples to infect on day 1. Default None.
+        disease_spread_rate:
+            Base daily infection probability (isotropic baseline). Default 0.15.
+        disease_latency_days:
+            Days from infection to when a plant becomes infectious. Default 5.
+        disease_stress_increment:
+            Daily disease_stress increment for infected plants. Default 0.04.
+        disease_wind_direction_deg:
+            Prevailing wind direction (met bearing, 0=N, 90=E, 180=S, 270=W).
+            Direction FROM which wind blows. Default 270 (wind from West).
+        disease_anisotropy:
+            Directional bias strength [0=isotropic, 1=fully directional].
+            Default 0.80.
+        disease_seed:
+            Random seed for reproducible spread. Default None.
 
         Raises
         ------
@@ -794,7 +836,7 @@ class Farm:
 
         Notes
         -----
-        PRD v0.2.0 / v0.3.0 backward compatibility:
+        PRD v0.2.0 / v0.3.0 / v0.5.0 backward compatibility:
             If ``use_physics()`` is never called, simulation behaves identically
             to v0.1.0 -- no engine hooks are registered.
         """
@@ -803,10 +845,14 @@ class Farm:
             PHASE_ROOT_ENGINE,
             PHASE_HYDROLOGY_ENGINE,
             PHASE_NUTRIENTS_ENGINE,
+            PHASE_RADIATION_ENGINE,
+            PHASE_DISEASE_ENGINE,
             make_et0_hook,
             make_root_impedance_hook,
             make_hydrology_hook,
             make_nutrients_hook,
+            make_radiation_hook,
+            make_disease_hook,
         )
         from cropforge.runtime import CropForgeConfigError
 
@@ -832,6 +878,8 @@ class Farm:
             "water_balance": water_balance,
             "nutrients": nutrients,
             "lateral_flow": lateral_flow,
+            "radiation": radiation,
+            "disease": disease,
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
         })
@@ -873,7 +921,34 @@ class Farm:
                 self.name,
             )
 
-        if not et0 and not root_impedance and not water_balance and not nutrients and not lateral_flow:
+        if radiation:
+            hook = make_radiation_hook(k_extinction=k_extinction)
+            self._physics_registry.append((PHASE_RADIATION_ENGINE, hook))
+            logger.info(
+                "Farm %r: Radiation interception engine enabled (k=%.3f).",
+                self.name, k_extinction,
+            )
+
+        if disease:
+            hook = make_disease_hook(
+                initial_foci=disease_foci,
+                spread_rate=disease_spread_rate,
+                latency_days=disease_latency_days,
+                stress_increment=disease_stress_increment,
+                wind_direction_deg=disease_wind_direction_deg,
+                anisotropy=disease_anisotropy,
+                seed=disease_seed,
+            )
+            self._physics_registry.append((PHASE_DISEASE_ENGINE, hook))
+            logger.info(
+                "Farm %r: Spatial disease engine enabled "
+                "(spread=%.2f, wind=%.1f°, latency=%d days).",
+                self.name, disease_spread_rate,
+                disease_wind_direction_deg, disease_latency_days,
+            )
+
+        if not any([et0, root_impedance, water_balance,
+                    nutrients, lateral_flow, radiation, disease]):
             logger.debug(
                 "Farm %r: use_physics() called with all engines disabled -- no-op.",
                 self.name,

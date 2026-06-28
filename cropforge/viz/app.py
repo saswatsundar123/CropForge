@@ -360,128 +360,439 @@ def create_dash_app(log_path: str):
         external_stylesheets=[],
     )
 
-    # ---- Inline CSS (no CDN — fully offline per PRD Section 7.1) -----
-    _STYLE_MAIN = {
-        "fontFamily": "'Segoe UI', Arial, sans-serif",
-        "background": "#0f1117",
-        "color": "#e2e8f0",
-        "minHeight": "100vh",
-        "margin": "0",
-        "padding": "0",
-    }
-    _STYLE_HEADER = {
-        "background": "linear-gradient(90deg, #1a2332 0%, #162032 100%)",
-        "borderBottom": "1px solid #2d3748",
-        "padding": "12px 24px",
-        "display": "flex",
-        "alignItems": "center",
-        "justifyContent": "space-between",
-    }
-    _STYLE_CONTENT = {
-        "display": "grid",
-        "gridTemplateColumns": "60fr 40fr",
-        "gridTemplateRows": "auto",
-        "gap": "0",
-        "height": "calc(100vh - 56px)",
-    }
-    _STYLE_PANEL = {
-        "background": "#111827",
-        "border": "1px solid #1e2a3a",
-        "borderRadius": "4px",
-        "margin": "8px",
-        "padding": "16px",
-        "overflow": "auto",
-    }
-    _STYLE_PANEL_TITLE = {
-        "fontSize": "11px",
-        "fontWeight": "700",
-        "letterSpacing": "0.12em",
-        "textTransform": "uppercase",
-        "color": "#4a9eff",
-        "marginBottom": "12px",
-        "paddingBottom": "8px",
-        "borderBottom": "1px solid #1e2a3a",
-    }
-    _STYLE_3D_PLACEHOLDER = {
-        "display": "flex",
-        "flexDirection": "column",
-        "alignItems": "center",
-        "justifyContent": "center",
-        "height": "calc(100% - 48px)",
-        "background": "#0d1520",
-        "border": "2px dashed #2d3748",
-        "borderRadius": "6px",
-        "color": "#4a5568",
-    }
-    _STYLE_RIGHT_COL = {
-        "display": "flex",
-        "flexDirection": "column",
-        "gap": "0",
-    }
-    _STYLE_SELECT = {
-        "background": "#1a2332",
-        "color": "#e2e8f0",
-        "border": "1px solid #2d3748",
-        "borderRadius": "4px",
-        "padding": "4px 8px",
-        "fontSize": "13px",
-        "width": "100%",
-        "marginBottom": "8px",
-    }
-    _STYLE_BADGE = {
-        "display": "inline-block",
-        "background": "#1e3a5f",
-        "color": "#4a9eff",
-        "borderRadius": "4px",
-        "padding": "2px 8px",
-        "fontSize": "12px",
-        "marginRight": "8px",
-    }
-    _STYLE_EVENT_LINE = {
-        "padding": "4px 8px",
-        "borderLeft": "2px solid #4a9eff",
-        "marginBottom": "4px",
-        "fontSize": "12px",
-        "fontFamily": "monospace",
-        "color": "#94a3b8",
-        "background": "#0d1520",
-        "borderRadius": "0 4px 4px 0",
-    }
-    _STYLE_INSPECTOR = {
-        "position": "fixed",
-        "right": "0",
-        "top": "56px",
-        "width": "340px",
-        "height": "calc(100vh - 56px)",
-        "background": "#111827",
-        "borderLeft": "1px solid #2d3748",
-        "padding": "16px",
-        "overflowY": "auto",
-        "transform": "translateX(340px)",
-        "transition": "transform 0.3s ease",
-        "zIndex": "100",
-        "boxShadow": "-4px 0 24px rgba(0,0,0,0.5)",
-    }
-    _STYLE_INSPECTOR_OPEN = {
-        **_STYLE_INSPECTOR,
-        "transform": "translateX(0px)",
-    }
-    _STYLE_STAT_ROW = {
-        "display": "flex",
-        "justifyContent": "space-between",
-        "alignItems": "center",
-        "padding": "5px 0",
-        "borderBottom": "1px solid #1e2a3a",
-        "fontSize": "12px",
-    }
-    _STYLE_STAT_LABEL = {
-        "color": "#64748b",
-        "fontFamily": "monospace",
-    }
-    _STYLE_STAT_VALUE = {
-        "color": "#e2e8f0",
-        "fontWeight": "600",
-    }
+    # ---- Brand palette (v0.5.0 — MINIMALIST THEME) -------------------------
+    # PRD §4.4: Minimalist UI, strict utilitarian document-style aesthetic.
+    ACCENT   = "#111111"   # solid black (buttons, primary states)
+    ACCENT_D = "#333333"   # hover states
+    ACCENT_L = "#EAEAEA"   # light borders
+    ACCENT_XL= "#EDF3EC"   # muted pastel green for tags
+    ACCENT_TEXT = "#346538" # text for muted pastel tags
+
+    BG_APP   = "#FBFBFA"   # warm off-white app shell
+    BG_PANEL = "#FFFFFF"   # white panels
+    BG_SIDEBAR="#FFFFFF"   # pure white sidebar
+    BG_DARK  = "#9c9c9c"   # darkened viewport background to isolate 3D scene
+
+    BORDER   = "rgba(0,0,0,0.06)"   # ultra-light border
+    BORDER_STRONG = "#EAEAEA"       # primary structural border
+    SHADOW_SM= "none"
+    SHADOW_MD= "0 2px 8px rgba(0,0,0,0.04)"
+    SHADOW   = "none"
+
+    TEXT_PRI = "#111111"   # off-black — primary text
+    TEXT_SEC = "#787774"   # muted grey — secondary / labels
+    TEXT_DIM = "#9CA3AF"   # light grey — placeholders
+    TEXT_ACC = "#111111"
+
+    _ROOT_CSS = f"""
+        /* ================================================================
+           CropForge v0.5.0 — Premium Utilitarian Minimalism
+        ================================================================ */
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        body {{
+            font-family: 'SF Pro Display', 'Geist Sans', 'Helvetica Neue', 'Switzer', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background: {BG_APP};
+            color: {TEXT_PRI};
+            overflow: hidden;
+            line-height: 1.6;
+            font-variant-numeric: tabular-nums;
+        }}
+
+        /* ---- Loading overlay ---------------------------------------- */
+        #cf-loading-overlay {{
+            position: fixed; inset: 0; z-index: 9999;
+            background: {BG_APP};
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            transition: opacity 0.5s cubic-bezier(0.32,0.72,0,1),
+                        visibility 0.5s cubic-bezier(0.32,0.72,0,1);
+        }}
+        #cf-loading-overlay.hidden {{
+            opacity: 0; visibility: hidden; pointer-events: none;
+        }}
+        .cf-logo-pulse {{
+            width: 60px; height: 60px; border-radius: 16px;
+            background: linear-gradient(135deg, {ACCENT_D}, {ACCENT_L});
+            display: flex; align-items: center; justify-content: center;
+            font-size: 28px; margin-bottom: 22px;
+            box-shadow: 0 4px 24px rgba(26,143,92,0.30);
+            animation: cfPulse 2s cubic-bezier(0.4,0,0.6,1) infinite;
+        }}
+        @keyframes cfPulse {{
+            0%, 100% {{ box-shadow: 0 4px 24px rgba(26,143,92,0.30); transform: scale(1); }}
+            50%       {{ box-shadow: 0 4px 40px rgba(26,143,92,0.50); transform: scale(1.04); }}
+        }}
+        .cf-loading-title {{
+            font-size: 14px; font-weight: 700; letter-spacing: 0.16em;
+            text-transform: uppercase; color: {ACCENT}; margin-bottom: 4px;
+        }}
+        .cf-loading-sub {{
+            font-size: 12px; color: {TEXT_SEC}; margin-bottom: 24px;
+        }}
+        .cf-progress-track {{
+            width: 200px; height: 3px; background: #E5E7EB;
+            border-radius: 99px; overflow: hidden;
+        }}
+        .cf-progress-fill {{
+            height: 100%;
+            background: linear-gradient(90deg, {ACCENT_D}, {ACCENT_L});
+            border-radius: 99px;
+            animation: cfSlide 1.6s cubic-bezier(0.4,0,0.6,1) infinite;
+        }}
+        @keyframes cfSlide {{
+            0%   {{ margin-left: -40%; width: 40%; }}
+            60%  {{ margin-left: 60%; width: 50%; }}
+            100% {{ margin-left: 130%; width: 40%; }}
+        }}
+
+        /* ---- Top bar ----------------------------------------------- */
+        #cf-topbar {{
+            height: 52px; flex-shrink: 0;
+            background: {BG_PANEL};
+            border-bottom: 1px solid #EAEAEA;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 24px;
+            box-shadow: none;
+            animation: cfFadeDown 0.35s cubic-bezier(0.32,0.72,0,1) both;
+            position: relative; z-index: 10;
+        }}
+        @keyframes cfFadeDown {{
+            from {{ opacity: 0; transform: translateY(-8px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .cf-wordmark {{
+            font-size: 15px; font-weight: 800; letter-spacing: -0.01em;
+            color: {ACCENT};
+            display: flex; align-items: center; gap: 10px;
+        }}
+        .cf-wordmark-divider {{
+            width: 1px; height: 14px; background: #D1D5DB;
+        }}
+        .cf-wordmark-subtitle {{
+            font-size: 12px; font-weight: 500; color: {TEXT_SEC};
+            letter-spacing: 0;
+        }}
+        .cf-badge {{
+            display: inline-flex; align-items: center;
+            background: {ACCENT_XL};
+            color: {ACCENT_TEXT};
+            border: none;
+            border-radius: 9999px;
+            padding: 4px 10px; font-size: 11px; font-weight: 600;
+            margin-left: 8px; font-variant-numeric: tabular-nums;
+            letter-spacing: 0.05em; text-transform: uppercase;
+        }}
+        .cf-btn {{
+            display: inline-flex; align-items: center; gap: 6px;
+            background: {ACCENT};
+            color: #FFFFFF;
+            border: none; border-radius: 4px;
+            padding: 6px 16px; font-size: 12px; font-weight: 600;
+            cursor: pointer; margin-left: 12px;
+            transition: background 0.15s cubic-bezier(0.32,0.72,0,1),
+                        transform 0.1s cubic-bezier(0.32,0.72,0,1);
+            min-height: 34px;
+        }}
+        .cf-btn:hover {{
+            background: {ACCENT_D};
+            transform: scale(0.98);
+        }}
+        .cf-btn:active {{ transform: scale(0.96); }}
+
+        /* ---- Three-column shell ------------------------------------ */
+        #cf-shell {{
+            display: grid;
+            grid-template-columns: 280px 1fr 380px;
+            grid-template-rows: 1fr;
+            height: calc(100vh - 52px);
+            animation: cfFadeIn 0.5s 0.08s cubic-bezier(0.32,0.72,0,1) both;
+        }}
+        @keyframes cfFadeIn {{
+            from {{ opacity: 0; }}
+            to   {{ opacity: 1; }}
+        }}
+
+        /* ---- Left sidebar ------------------------------------------ */
+        #cf-sidebar {{
+            background: {BG_SIDEBAR};
+            border-right: 1px solid #EAEAEA;
+            padding: 24px 20px;
+            /* overflow-y: auto removed — causes dropdown menus to be clipped.
+               Instead the sidebar itself scrolls via a dedicated inner scroller. */
+            overflow: visible;
+            display: flex; flex-direction: column; gap: 0;
+        }}
+        /* Inner scroller so sidebar content can scroll without clipping dropdowns */
+        #cf-sidebar-inner {{
+            overflow-y: auto;
+            flex: 1;
+            min-height: 0;
+        }}
+        #cf-sidebar-logo {{
+            display: flex; align-items: center; gap: 10px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #E5E7EB;
+            margin-bottom: 16px;
+        }}
+        #cf-sidebar-logo-mark {{
+            width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+            background: linear-gradient(135deg, {ACCENT_D}, {ACCENT_L});
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px;
+            box-shadow: 0 2px 8px rgba(26,143,92,0.25);
+        }}
+        #cf-sidebar-logo-text {{
+            font-size: 14px; font-weight: 700; color: {TEXT_PRI};
+            letter-spacing: -0.01em;
+        }}
+        #cf-sidebar-logo-version {{
+            font-size: 10px; font-weight: 500; color: {TEXT_DIM};
+            letter-spacing: 0.04em;
+        }}
+
+        .cf-section {{
+            margin-bottom: 18px;
+            animation: cfFadeUp 0.4s cubic-bezier(0.32,0.72,0,1) both;
+            position: relative;
+        }}
+        .cf-sec-1 {{ z-index: 50 !important; }}
+        .cf-sec-2 {{ z-index: 40 !important; }}
+        .cf-sec-3 {{ z-index: 30 !important; }}
+        .cf-sec-4 {{ z-index: 20 !important; }}
+        .cf-sec-5 {{ z-index: 10 !important; }}
+        @keyframes cfFadeUp {{
+            from {{ opacity: 0; transform: translateY(10px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        .cf-label {{
+            font-size: 10px; font-weight: 700; letter-spacing: 0.10em;
+            text-transform: uppercase; color: {TEXT_DIM};
+            margin-bottom: 7px; display: block;
+        }}
+        .cf-divider {{
+            height: 1px; background: #F3F4F6; margin: 4px 0 18px;
+        }}
+
+        /* ---- Dash Dropdown overrides (react-select) ---------------- */
+        /* Force visible text in all dropdown states */
+        .cf-select .Select-control,
+        .cf-select .VirtualizedSelectFocusedOption,
+        .cf-select .VirtualizedSelectOption {{
+            background: #FFFFFF !important;
+            border: 1px solid #EAEAEA !important;
+            border-radius: 4px !important;
+            font-size: 13px !important;
+            color: {TEXT_PRI} !important;
+            box-shadow: none !important;
+        }}
+        .cf-select .Select-control:hover {{
+            border-color: #333333 !important;
+        }}
+        .cf-select .Select-value,
+        .cf-select .Select-value-label {{
+            color: {TEXT_PRI} !important;
+            font-size: 13px !important;
+            font-weight: 500 !important;
+        }}
+        .cf-select .Select-placeholder {{
+            color: {TEXT_DIM} !important;
+            font-size: 13px !important;
+        }}
+        .cf-select .Select-arrow-zone .Select-arrow {{
+            border-top-color: {TEXT_SEC} !important;
+        }}
+        .cf-select .Select-menu-outer {{
+            background-color: #FFFFFF !important;
+            border: 1px solid #D1D1D1 !important;
+            border-radius: 4px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+            overflow: hidden;
+            z-index: 9999 !important;
+        }}
+        .cf-select .Select-menu {{
+            background-color: #FFFFFF !important;
+        }}
+        .cf-select .Select-option {{
+            font-size: 13px !important;
+            color: {TEXT_PRI} !important;
+            background: #FFFFFF !important;
+            padding: 8px 14px !important;
+        }}
+        .cf-select .Select-option:hover,
+        .cf-select .Select-option.is-focused {{
+            background: {ACCENT_XL} !important;
+            color: {ACCENT} !important;
+        }}
+        .cf-select .Select-option.is-selected {{
+            background: {ACCENT} !important;
+            color: #FFFFFF !important;
+        }}
+        /* Dash 2.x uses different class names for dropdowns */
+        .cf-select .dropdown .Select-control,
+        .cf-select div[class*="control"] {{
+            background: #FFFFFF !important;
+            border: 1px solid #EAEAEA !important;
+            border-radius: 4px !important;
+            box-shadow: none !important;
+        }}
+
+        /* ---- Centre — 3D viewport ---------------------------------- */
+        #cf-viewport {{
+            position: relative;
+            background: {BG_DARK};
+            border: 1px solid #D0D0D0;
+            margin: 16px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: {SHADOW_MD};
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }}
+        /* dcc.Loading injects a div wrapper — must also be flex so iframe fills height */
+        #cf-viewport > div,
+        #viewport-loading,
+        #viewport-loading > div {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            width: 100%;
+            position: static; /* Ensure they don't trap absolute positioning */
+        }}
+        #cf-viewport iframe {{
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }}
+
+        /* ---- Right column ------------------------------------------ */
+        #cf-right {{
+            background: {BG_APP};
+            border-left: 1px solid #EAEAEA;
+            display: flex; flex-direction: column;
+            overflow-y: auto;
+            padding: 12px;
+        }}
+
+        /* Panel card — minimalist bento card */
+        .cf-card {{
+            background: {BG_PANEL};
+            border-radius: 8px;
+            border: 1px solid #C0C0C0;
+            margin-bottom: 24px;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            overflow: visible;
+        }}
+
+        .cf-panel-header {{
+            padding: 20px 24px 12px;
+            border-bottom: 1px solid #C0C0C0;
+        }}
+        .cf-panel-title {{
+            font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+            text-transform: uppercase; color: {TEXT_PRI};
+        }}
+        .cf-chart-area {{
+            padding: 16px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }}
+
+        /* ---- Plant Inspector --------------------------------------- */
+        #cf-inspector {{
+            flex-shrink: 0;
+        }}
+        .cf-inspector-placeholder {{
+            font-size: 13px; color: {TEXT_DIM};
+            text-align: center; padding: 32px 12px;
+            line-height: 1.7;
+        }}
+        .cf-stat-row {{
+            display: flex; justify-content: space-between;
+            align-items: center; padding: 8px 0;
+            border-bottom: 1px solid #EAEAEA;
+            font-size: 13px;
+        }}
+        .cf-stat-row:last-child {{ border-bottom: none; }}
+        .cf-stat-label {{ color: {TEXT_SEC}; font-family: 'Geist Mono', 'SF Mono', monospace; font-size: 12px; }}
+        .cf-stat-value {{
+            color: {TEXT_PRI}; font-weight: 500;
+            font-variant-numeric: tabular-nums; font-size: 13px;
+        }}
+
+        /* ---- Event log entries ------------------------------------ */
+        .cf-event-line {{
+            padding: 6px 12px;
+            border-left: 2px solid #EAEAEA;
+            margin-bottom: 4px; font-size: 12px;
+            font-family: 'Geist Mono', 'SF Mono', monospace;
+            color: {TEXT_SEC};
+            background: #F9F9F8;
+            border-radius: 0 4px 4px 0;
+        }}
+
+        /* ---- Scrollbar -------------------------------------------- */
+        ::-webkit-scrollbar {{ width: 4px; height: 4px; }}
+        ::-webkit-scrollbar-track {{ background: transparent; }}
+        ::-webkit-scrollbar-thumb {{ background: #D1D5DB; border-radius: 99px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: {ACCENT_L}; }}
+
+        /* ---- Slider overrides ------------------------------------- */
+        .rc-slider-track {{ background: {ACCENT} !important; }}
+        .rc-slider-handle {{
+            border-color: {ACCENT} !important;
+            box-shadow: 0 0 0 2px {ACCENT_XL} !important;
+        }}
+        .rc-slider-rail {{ background: #E5E7EB !important; }}
+
+        /* ---- Plotly chart text visibility ------------------------- */
+        .js-plotly-plot .plotly .gtitle,
+        .js-plotly-plot .plotly .xtitle,
+        .js-plotly-plot .plotly .ytitle {{
+            fill: {TEXT_SEC} !important;
+        }}
+    """
+
+    _STYLE_MAIN      = {"margin": "0", "padding": "0", "height": "100vh",
+                        "display": "flex", "flexDirection": "column",
+                        "background": BG_APP, "color": TEXT_PRI,
+                        "fontFamily": "'SF Pro Display', 'Geist Sans', sans-serif"}
+    _STYLE_SELECT    = {"background": "#FFFFFF",
+                        "color": TEXT_PRI, "border": "1px solid #EAEAEA",
+                        "borderRadius": "4px", "width": "100%", "marginBottom": "12px"}
+    _STYLE_BADGE     = {"display": "inline-flex", "alignItems": "center",
+                        "background": ACCENT_XL,
+                        "color": ACCENT_TEXT, "border": "none",
+                        "borderRadius": "9999px", "padding": "4px 10px",
+                        "fontSize": "11px", "fontWeight": "600",
+                        "marginLeft": "8px", "textTransform": "uppercase",
+                        "fontVariantNumeric": "tabular-nums"}
+    _STYLE_EVENT_LINE = {"padding": "5px 10px",
+                         "borderLeft": f"2px solid {ACCENT_L}",
+                         "marginBottom": "4px", "fontSize": "11px",
+                         "fontFamily": "ui-monospace, monospace",
+                         "color": TEXT_SEC,
+                         "background": ACCENT_XL,
+                         "borderRadius": "0 6px 6px 0"}
+    _STYLE_STAT_ROW   = {"display": "flex", "justifyContent": "space-between",
+                         "alignItems": "center", "padding": "5px 0",
+                         "borderBottom": "1px solid #F3F4F6",
+                         "fontSize": "12px"}
+    _STYLE_STAT_LABEL = {"color": TEXT_SEC, "fontFamily": "ui-monospace, monospace",
+                         "fontSize": "11px"}
+    _STYLE_STAT_VALUE = {"color": TEXT_PRI, "fontWeight": "600",
+                         "fontVariantNumeric": "tabular-nums", "fontSize": "12px"}
 
     # ---- Field selector options ----------------------------------------
     field_names = []
@@ -489,6 +800,29 @@ def create_dash_app(log_path: str):
         field_names = sorted(plants_df["field_name"].unique().tolist())
     default_field = field_names[0] if field_names else ""
     field_options = [{"label": fn, "value": fn} for fn in field_names]
+
+    # Inject global CSS via app.index_string (html.Style is not available in all Dash versions)
+    # This is the canonical Dash mechanism for injecting <style> into <head>.
+    app.index_string = (
+        "<!DOCTYPE html>"
+        "<html>"
+        "<head>"
+        "{%metas%}"
+        "<title>{%title%}</title>"
+        "{%favicon%}"
+        "{%css%}"
+        f"<style>{_ROOT_CSS}</style>"
+        "</head>"
+        "<body>"
+        "{%app_entry%}"
+        "<footer>"
+        "{%config%}"
+        "{%scripts%}"
+        "{%renderer%}"
+        "</footer>"
+        "</body>"
+        "</html>"
+    )
 
     app.layout = html.Div(
         style=_STYLE_MAIN,
@@ -502,107 +836,77 @@ def create_dash_app(log_path: str):
                       data=default_field),
             # Polling interval: fires every 250 ms to relay postMessage → Dash store
             dcc.Interval(id="inspector-poll", interval=250, n_intervals=0),
-            # Hidden div: JS message listener writes plant data here as data attribute
             html.Div(id="plant-msg-trigger", style={"display": "none"}),
+            # dcc.Download — file-delivery component
+            dcc.Download(id="download-csv"),
 
+            # ================================================================
+            # Dash-level loading overlay (Task 2: Preloader State)
+            # Visible immediately; hidden via JS when viewport LOAD_COMPLETE
+            # fires. Prevents blank-screen flash on first render.
+            # ================================================================
+            html.Div(
+                id="cf-loading-overlay",
+                children=[
+                    html.Div("🌱", className="cf-logo-pulse"),
+                    html.Div("CropForge", className="cf-loading-title"),
+                    html.Div("Initialising workspace...", className="cf-loading-sub"),
+                    html.Div(
+                        html.Div(className="cf-progress-fill"),
+                        className="cf-progress-track",
+                    ),
+                ],
+            ),
 
-            # ---- Header bar ------------------------------------------
-            html.Div(style=_STYLE_HEADER, children=[
+            # ================================================================
+            # Top bar — wordmark, session badges, export button
+            # ================================================================
+            html.Div(id="cf-topbar", children=[
                 html.Div([
-                    html.Span("CropForge", style={
-                        "fontWeight": "800", "fontSize": "18px", "color": "#4a9eff",
-                        "marginRight": "16px",
-                    }),
-                    html.Span("Dashboard", style={
-                        "fontSize": "14px", "color": "#64748b",
-                    }),
-                ]),
+                    html.Div("CropForge", className="cf-wordmark"),
+                    html.Div(className="cf-wordmark-divider"),
+                    html.Div(session_name, className="cf-wordmark-subtitle"),
+                ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
                 html.Div([
-                    html.Span(f"Session: {session_name}", style=_STYLE_BADGE),
-                    html.Span(f"{n_days} days", style=_STYLE_BADGE),
-                    html.Span(f"{n_plants} plants", style=_STYLE_BADGE),
-                    html.Span(f"{n_fields} field(s)", style=_STYLE_BADGE),
-                    # v0.4.0 — CSV export button in header (PRD §8.2)
+                    html.Span(f"{n_days}d", style=_STYLE_BADGE,
+                              title="Total simulation days"),
+                    html.Span(f"{n_plants:,} plants", style=_STYLE_BADGE),
+                    html.Span(f"{n_fields} field{'s' if n_fields != 1 else ''}",
+                              style=_STYLE_BADGE),
                     html.Button(
                         "⬇ Export CSV",
                         id="export-csv-btn",
                         n_clicks=0,
-                        style={
-                            "background": "#1e3a5f",
-                            "color": "#4a9eff",
-                            "border": "1px solid #2d5a8e",
-                            "borderRadius": "4px",
-                            "padding": "4px 12px",
-                            "fontSize": "12px",
-                            "cursor": "pointer",
-                            "fontWeight": "600",
-                            "marginLeft": "8px",
-                            "transition": "background 0.2s",
-                        },
+                        className="cf-btn",
                     ),
-                    # dcc.Download — the actual file-delivery component
-                    dcc.Download(id="download-csv"),
-                ]),
+                ], style={"display": "flex", "alignItems": "center"}),
             ]),
 
-            # ---- Main content grid -----------------------------------
-            html.Div(style=_STYLE_CONTENT, children=[
+            # ================================================================
+            # Main three-column shell
+            # ================================================================
+            html.Div(id="cf-shell", children=[
 
-                # ========================================================
-                # Panel 1: 3D Farm View — Three.js iframe (Phase 3)
-                # ========================================================
-                html.Div(style={**_STYLE_PANEL, "gridRow": "1 / 3",
-                                "padding": "0", "overflow": "hidden"}, children=[
-                    html.Iframe(
-                        id="viewport-iframe",
-                        src="/viewport/",
-                        style={
-                            "width": "100%",
-                            "height": "100%",
-                            "border": "none",
-                            "display": "block",
-                            "minHeight": "480px",
-                        },
-                    ),
-                ]),
+                # ============================================================
+                # LEFT SIDEBAR — all controls (PRD §4.3: 18%)
+                # ============================================================
+                html.Div(id="cf-sidebar", children=[
 
-                # ========================================================
-                # Right column wrapper
-                # ========================================================
-                html.Div(style=_STYLE_RIGHT_COL, children=[
-
-                    # ====================================================
-                    # Panel 2: Metrics Dashboard (upper right)
-                    # ====================================================
-                    html.Div(style={**_STYLE_PANEL, "flex": "1", "minHeight": "0"}, children=[
-                        html.Div("Panel 2: Metrics Dashboard", style=_STYLE_PANEL_TITLE),
-                        # ---- Field Selector (v0.2.0 Multi-Field) -------
-                        # Single unconditional dropdown — always rendered so
-                        # callbacks wire correctly. Wrapper is hidden for
-                        # single-field sessions; the badge shows the field name.
-                        html.Div(style={
-                            "display": "flex" if len(field_names) > 1 else "none",
-                            "gap": "12px",
-                            "alignItems": "center",
-                            "marginBottom": "8px",
-                        }, children=[
-                            html.Div("Active Field (3D + Heatmap)", style={
-                                "fontSize": "11px", "color": "#64748b",
-                                "fontWeight": "600", "whiteSpace": "nowrap",
-                                "flexShrink": "0",
-                            }),
+                    # -- Sidebar logo/brand mark ---
+                    html.Div(id="cf-sidebar-logo", children=[
+                        html.Div("🌱", id="cf-sidebar-logo-mark"),
+                        html.Div([
+                            html.Div("CropForge", id="cf-sidebar-logo-text"),
+                            html.Div("v0.5.0 · Research Dashboard",
+                                     id="cf-sidebar-logo-version"),
                         ]),
-                        # Field badge for single-field sessions (cosmetic only)
-                        html.Div(style={
-                            "display": "block" if len(field_names) <= 1 else "none",
-                            "marginBottom": "6px",
-                        }, children=[
-                            html.Span(
-                                default_field or "—",
-                                style={**_STYLE_BADGE, "display": "inline-block"},
-                            ),
-                        ]),
-                        # The one and only field-selector dropdown
+                    ]),
+
+                    # -- Field selector (multi-field only) ---
+                    html.Div(id="cf-sidebar-inner", children=[
+
+                    html.Div(className="cf-section cf-sec-1", children=[
+                        html.Span("Active Field", className="cf-label"),
                         dcc.Dropdown(
                             id="field-selector",
                             options=field_options,
@@ -610,53 +914,70 @@ def create_dash_app(log_path: str):
                             clearable=False,
                             style={
                                 **_STYLE_SELECT,
-                                "marginBottom": "8px",
                                 "display": "block" if len(field_names) > 1 else "none",
                             },
+                            className="cf-select",
                         ),
-
-
-                        # ---- Time-series chart -------------------------
-                        html.Div("Time-Series Variable", style={
-                            "fontSize": "11px", "color": "#64748b",
-                            "marginBottom": "4px", "fontWeight": "600",
-                        }),
-                        dcc.Dropdown(
-                            id="ts-variable-dropdown",
-                            options=plant_metric_options,
-                            value="mean_root_depth_cm",
-                            clearable=False,
-                            style=_STYLE_SELECT,
+                        html.Div(
+                            style={
+                                "display": "block" if len(field_names) <= 1 else "none",
+                            },
+                            children=html.Span(
+                                default_field or "—",
+                                style={**_STYLE_BADGE,
+                                       "fontSize": "12px", "marginLeft": "0"},
+                            ),
                         ),
-                        dcc.Graph(
-                            id="timeseries-chart",
-                            config={"displayModeBar": True,
-                                    "modeBarButtonsToRemove": ["lasso2d"],
-                                    "toImageButtonOptions": {
-                                        "format": "png", "filename": "cropforge_timeseries"
-                                    }},
-                            style={"height": "220px"},
-                        ),
+                    ]),
 
-                        html.Hr(style={"border": "0", "borderTop": "1px solid #1e2a3a",
-                                       "margin": "12px 0"}),
+                    html.Div(className="cf-divider"),
 
-                        # ---- Spatial heatmap + scrubber ----------------
-                        html.Div("Spatial Heatmap — Variable", style={
-                            "fontSize": "11px", "color": "#64748b",
-                            "marginBottom": "4px", "fontWeight": "600",
-                        }),
+                    # -- 3D colour variable ---
+                    html.Div(className="cf-section cf-sec-2", children=[
+                        html.Span("3D Colour Variable", className="cf-label"),
                         dcc.Dropdown(
                             id="heatmap-variable-dropdown",
-                            options=spatial_options,
+                            options=[
+                                {"label": "Biomass (g/plant)",   "value": "biomass_g"},
+                                {"label": "LAI (m²/m²)", "value": "lai"},
+                                {"label": "Height (cm)",          "value": "height_cm"},
+                                {"label": "Stress Index",         "value": "stress_index"},
+                            ],
                             value="biomass_g",
                             clearable=False,
                             style=_STYLE_SELECT,
+                            className="cf-select",
                         ),
-                        html.Div("Simulation Day", style={
-                            "fontSize": "11px", "color": "#64748b",
-                            "marginBottom": "4px", "marginTop": "8px", "fontWeight": "600",
-                        }),
+                    ]),
+
+                    html.Div(className="cf-divider"),
+
+                    # -- Metrics variable ---
+                    html.Div(className="cf-section cf-sec-3", children=[
+                        html.Span("Time-Series Metric", className="cf-label"),
+                        dcc.Dropdown(
+                            id="ts-variable-dropdown",
+                            options=[
+                                {"label": "Mean Biomass (g/plant)", "value": "mean_biomass_g"},
+                                {"label": "Mean LAI (m²/m²)", "value": "mean_lai"},
+                                {"label": "Mean Height (cm)",        "value": "mean_height_cm"},
+                                {"label": "Mean Root Depth (cm)",    "value": "mean_root_depth_cm"},
+                                {"label": "Mean Stress Index",       "value": "mean_stress_index"},
+                                {"label": "Alive Plant Count",       "value": "alive_count"},
+                                {"label": "Dead Plant Count",        "value": "dead_count"},
+                            ],
+                            value="mean_root_depth_cm",
+                            clearable=False,
+                            style=_STYLE_SELECT,
+                            className="cf-select",
+                        ),
+                    ]),
+
+                    html.Div(className="cf-divider"),
+
+                    # -- Day scrubber ---
+                    html.Div(className="cf-section cf-sec-4", children=[
+                        html.Span("Simulation Day", className="cf-label"),
                         dcc.Slider(
                             id="day-scrubber",
                             min=day_min,
@@ -666,103 +987,187 @@ def create_dash_app(log_path: str):
                             marks=day_marks,
                             tooltip={"placement": "bottom", "always_visible": True},
                         ),
-                        dcc.Graph(
-                            id="heatmap-chart",
-                            config={"displayModeBar": False},
-                            style={"height": "240px"},
-                        ),
                     ]),
 
-                    # ====================================================
-                    # Panel 3: Event Log (lower right)
-                    # ====================================================
-                    html.Div(style={**_STYLE_PANEL, "flex": "0 0 180px",
-                                    "overflowY": "auto"}, children=[
-                        html.Div("Panel 3: Event Log", style=_STYLE_PANEL_TITLE),
+                    html.Div(className="cf-divider"),
+
+                    # -- Event log ---
+                    html.Div(className="cf-section cf-sec-5",
+                             children=[
+                        html.Span("Event Log", className="cf-label"),
                         html.Div(
                             id="event-log-content",
                             children=[
-                                html.Div(line, style=_STYLE_EVENT_LINE)
+                                html.Div(line, className="cf-event-line")
                                 for line in event_lines
                             ],
                         ),
                     ]),
 
+                    ]),  # end cf-sidebar-inner
+
+                ]),  # end sidebar
+
+                # ============================================================
+                # CENTRE — 3D Field View (PRD §4.3: 52%)
+                # ============================================================
+                html.Div(id="cf-viewport", children=[
+                    dcc.Loading(
+                        id="viewport-loading",
+                        type="circle",
+                        color=ACCENT,
+                        children=[
+                            html.Iframe(
+                                id="viewport-iframe",
+                                src="/viewport/",
+                                style={
+                                    "width": "100%",
+                                    "flex": "1",
+                                    "border": "none",
+                                    "display": "block",
+                                },
+                            ),
+                        ],
+                    ),
+                ]),
+
+                # ============================================================
+                # RIGHT COLUMN — Metrics + Inspector (PRD §4.3: 30%)
+                # ============================================================
+                html.Div(id="cf-right", children=[
+
+                    # -- Metrics card (time-series + field heatmap) --
+                    html.Div(className="cf-card",
+                             style={"flexShrink": "0"}, children=[
+
+                        html.Div(className="cf-panel-header", children=[
+                            html.Div("Metrics", className="cf-panel-title"),
+                        ]),
+
+                        html.Div(className="cf-chart-area",
+                                 children=[
+                            dcc.Graph(
+                                id="timeseries-chart",
+                                config={
+                                    "displayModeBar": True,
+                                    "modeBarButtonsToRemove": ["lasso2d"],
+                                    "toImageButtonOptions": {
+                                        "format": "png",
+                                        "filename": "cropforge_timeseries",
+                                    },
+                                },
+                                style={"height": "240px", "width": "100%"},
+                            ),
+
+                            html.Hr(style={"border": "0",
+                                           "borderTop": "1px solid #EAEAEA",
+                                           "margin": "12px 0"}),
+
+                            dcc.Graph(
+                                id="heatmap-chart",
+                                config={"displayModeBar": False},
+                                style={"height": "240px", "width": "100%"},
+                            ),
+                        ]),
+                    ]),  # end metrics card
+
+                    # -- Plant Inspector card (always-visible) --
+                    html.Div(
+                        className="cf-card",
+                        id="inspector-panel",
+                        style={
+                            "flexShrink": "0",
+                        },
+                        children=[
+                            html.Div(className="cf-panel-header", style={
+                                "display": "flex",
+                                "justifyContent": "space-between",
+                                "alignItems": "center",
+                            }, children=[
+                                html.Div("Plant Inspector", className="cf-panel-title",
+                                         style={"paddingBottom": "0", "borderBottom": "none"}),
+                                html.Button(
+                                    "✕",
+                                    id="inspector-close-btn",
+                                    n_clicks=0,
+                                    style={
+                                        "background": "transparent",
+                                        "border": "none", "color": TEXT_DIM,
+                                        "fontSize": "13px", "cursor": "pointer",
+                                        "padding": "4px 6px", "lineHeight": "1",
+                                        "borderRadius": "4px",
+                                        "transition": "color 0.15s cubic-bezier(0.32,0.72,0,1)",
+                                        "minWidth": "24px", "minHeight": "24px",
+                                    },
+                                ),
+                            ]),
+
+                            html.Div(style={"padding": "10px 16px 12px"}, children=[
+
+                                html.Div(id="inspector-plant-id", style={
+                                    "fontSize": "13px", "fontWeight": "700",
+                                    "color": TEXT_PRI, "marginBottom": "10px",
+                                    "fontFamily": "ui-monospace, monospace",
+                                    "fontVariantNumeric": "tabular-nums",
+                                }),
+
+                                # Placeholder — shown when no plant is selected
+                                html.Div(
+                                    id="inspector-content",
+                                    children=html.Div(
+                                        "Click any plant in the 3D Field View to inspect its state.",
+                                        className="cf-inspector-placeholder",
+                                    ),
+                                ),
+
+                                html.Div(id="inspector-soil-chart"),
+                            ]),
+                        ],
+                    ),  # end inspector card
+
                 ]),  # end right column
 
-            ]),  # end main content grid
-
-            # ========================================================
-            # Panel 4: Farm Inspector sidebar (collapsed by default)
-            # PRD Section 7.2: opens when a plant is clicked
-            # ========================================================
-            html.Div(
-                id="inspector-panel",
-                style=_STYLE_INSPECTOR,
-                children=[
-                    # Header row with close button
-                    html.Div(style={
-                        "display": "flex",
-                        "justifyContent": "space-between",
-                        "alignItems": "center",
-                        "marginBottom": "12px",
-                        "paddingBottom": "8px",
-                        "borderBottom": "1px solid #1e2a3a",
-                    }, children=[
-                        html.Span("Farm Inspector", style={
-                            "fontSize": "11px",
-                            "fontWeight": "700",
-                            "letterSpacing": "0.12em",
-                            "textTransform": "uppercase",
-                            "color": "#4a9eff",
-                        }),
-                        html.Button(
-                            "✕",
-                            id="inspector-close-btn",
-                            n_clicks=0,
-                            style={
-                                "background": "transparent",
-                                "border": "none",
-                                "color": "#64748b",
-                                "fontSize": "14px",
-                                "cursor": "pointer",
-                                "padding": "0 4px",
-                                "lineHeight": "1",
-                            },
-                        ),
-                    ]),
-
-                    # Plant ID badge
-                    html.Div(id="inspector-plant-id", style={
-                        "fontSize": "16px",
-                        "fontWeight": "700",
-                        "color": "#e2e8f0",
-                        "marginBottom": "12px",
-                        "fontFamily": "monospace",
-                    }),
-
-                    # Placeholder until a plant is clicked
-                    html.Div(
-                        id="inspector-content",
-                        children=html.Div(
-                            "Click a plant in the 3D view to inspect it.",
-                            style={"fontSize": "12px", "color": "#64748b",
-                                   "marginTop": "24px", "textAlign": "center"},
-                        ),
-                    ),
-
-                    # Soil cross-section chart (empty until plant clicked)
-                    html.Div(id="inspector-soil-chart"),
-                ],
-            ),
-
+            ]),  # end cf-shell
 
         ]
     )
 
+
     # ==================================================================
     # Callbacks
     # ==================================================================
+
+    # ------------------------------------------------------------------
+    # Clientside callback 0: Dismiss Dash-level loading overlay
+    # Listens for LOAD_COMPLETE postMessage from the Three.js iframe.
+    # Fires once; adds 'hidden' class to #cf-loading-overlay via CSS
+    # transition (opacity 0 + visibility hidden, 500ms ease).
+    # ------------------------------------------------------------------
+    app.clientside_callback(
+        """
+        function(iframeId) {
+            if (window._cf_load_listener_registered) return window.dash_clientside.no_update;
+            window._cf_load_listener_registered = true;
+            window.addEventListener('message', function(evt) {
+                if (evt.data && evt.data.type === 'LOAD_COMPLETE') {
+                    var overlay = document.getElementById('cf-loading-overlay');
+                    if (overlay) {
+                        overlay.classList.add('hidden');
+                    }
+                }
+            });
+            /* Also hide overlay after 8 s max (fallback for slow networks) */
+            setTimeout(function() {
+                var overlay = document.getElementById('cf-loading-overlay');
+                if (overlay) overlay.classList.add('hidden');
+            }, 8000);
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output("cf-loading-overlay", "id"),  # dummy — id never changes
+        Input("viewport-iframe", "id"),
+        prevent_initial_call=False,
+    )
 
     @app.callback(
         Output("timeseries-chart", "figure"),
@@ -799,8 +1204,8 @@ def create_dash_app(log_path: str):
         fields = sorted(plot_df["field_name"].unique())
         fig = go.Figure()
 
-        # Vibrant, clearly distinct colours per field
-        colors = ["#4a9eff", "#34d399", "#f59e0b", "#f87171", "#a78bfa"]
+        # Brand palette per PRD §4.4: primary green, secondary greens, red scale for stress
+        colors = ["#4CAF7D", "#81C784", "#A5D6A7", "#E57373", "#EF9A9A"]
         for i, field in enumerate(fields):
             field_data = plot_df[plot_df["field_name"] == field].sort_values("day")
             fig.add_trace(go.Scatter(
@@ -829,14 +1234,14 @@ def create_dash_app(log_path: str):
             )
 
         fig.update_layout(
-            **_dark_layout(),
+            **_chart_layout(),
             xaxis_title="Simulation Day",
             yaxis_title=y_label,
             showlegend=True,
             legend={
-                "font": {"size": 10, "color": "#94a3b8"},
-                "bgcolor": "rgba(13,21,32,0.7)",
-                "bordercolor": "#1e2a3a",
+                "font": {"size": 10, "color": "#78a88a"},
+                "bgcolor": "rgba(11,15,13,0.8)",
+                "bordercolor": "rgba(76,175,125,0.15)",
                 "borderwidth": 1,
                 "x": 0.01, "y": 0.99,
                 "xanchor": "left", "yanchor": "top",
@@ -905,7 +1310,7 @@ def create_dash_app(log_path: str):
             ),
         ))
         fig.update_layout(
-            **_dark_layout(),
+            **_chart_layout(),
             xaxis_title="Column",
             yaxis_title="Row",
             margin={"l": 48, "r": 12, "t": 12, "b": 32},
@@ -1068,12 +1473,13 @@ def create_dash_app(log_path: str):
         # Determine which input fired
         trigger_id = ctx.triggered_id if ctx.triggered_id else ""
 
-        # Close button → collapse panel
+        # Close button or deselect → show placeholder
         if trigger_id == "inspector-close-btn" or plant_data is None:
-            return _STYLE_INSPECTOR, "", html.Div(
-                "Click a plant in the 3D view to inspect it.",
-                style={"fontSize": "12px", "color": "#64748b",
-                       "marginTop": "24px", "textAlign": "center"},
+            return {}, "", html.Div(
+                "Click any plant in the Field View to inspect it.",
+                style={"fontSize": "11px", "color": "#3d5c47",
+                       "marginTop": "12px", "textAlign": "center",
+                       "lineHeight": "1.6"},
             ), html.Div()
 
         # Extract identity
@@ -1081,7 +1487,7 @@ def create_dash_app(log_path: str):
             try:
                 plant_data = _json.loads(plant_data)
             except Exception:
-                return _STYLE_INSPECTOR, "", html.Div(), html.Div()
+                return {}, "", html.Div(), html.Div()
 
         plant_id = plant_data.get("plant_id", "")
         p_row    = int(plant_data.get("row", 0))
@@ -1152,7 +1558,7 @@ def create_dash_app(log_path: str):
                 line_width=1,
             )
             fig_ts.update_layout(
-                **_dark_layout(),
+                **_chart_layout(),
                 height=120,
                 margin={"l": 40, "r": 8, "t": 8, "b": 24},
                 xaxis_title="Day",
@@ -1219,7 +1625,7 @@ def create_dash_app(log_path: str):
                                for i, d in enumerate(depths)],
                     ))
                 fig_soil.update_layout(
-                    **_dark_layout(),
+                    **_chart_layout(),
                     height=180,
                     margin={"l": 40, "r": 8, "t": 8, "b": 24},
                     xaxis_title="Value",
@@ -1238,7 +1644,7 @@ def create_dash_app(log_path: str):
                               style={"height": "180px"}),
                 ])
 
-        return _STYLE_INSPECTOR_OPEN, plant_id, inspector_children, soil_chart
+        return {}, plant_id, inspector_children, soil_chart
 
     # ------------------------------------------------------------------
     # CSV Download callback (PRD v0.4.0 §8.2)
@@ -1267,34 +1673,37 @@ def create_dash_app(log_path: str):
 # Chart helpers
 # ---------------------------------------------------------------------------
 
-def _dark_layout() -> dict:
-    """Common dark-theme layout properties for all Plotly figures."""
+def _chart_layout() -> dict:
+    """Common layout properties for all Plotly figures (v0.5.0 Minimalist Theme).
+
+    v0.5.0: Updated to premium utilitarian palette (PRD §4.4).
+    """
     return {
-        "paper_bgcolor": "#0d1520",
-        "plot_bgcolor":  "#0d1520",
-        "font":          {"color": "#94a3b8", "size": 11},
+        "paper_bgcolor": "#FFFFFF",
+        "plot_bgcolor":  "#FFFFFF",
+        "font":          {"color": "#787774", "size": 11, "family": "'SF Pro Display', 'Geist Sans', sans-serif"},
         "xaxis": {
-            "gridcolor": "#1e2a3a", "zerolinecolor": "#1e2a3a",
-            "tickfont": {"color": "#64748b", "size": 10},
+            "gridcolor": "#EAEAEA", "zerolinecolor": "#EAEAEA",
+            "tickfont": {"color": "#9CA3AF", "size": 10},
         },
         "yaxis": {
-            "gridcolor": "#1e2a3a", "zerolinecolor": "#1e2a3a",
-            "tickfont": {"color": "#64748b", "size": 10},
+            "gridcolor": "#EAEAEA", "zerolinecolor": "#EAEAEA",
+            "tickfont": {"color": "#9CA3AF", "size": 10},
         },
     }
 
 
 def _empty_figure(message: str = "No data") -> go.Figure:
-    """Return a dark-themed empty figure with a centred message."""
+    """Return an empty figure with a centred message."""
     fig = go.Figure()
     fig.update_layout(
-        **_dark_layout(),
+        **_chart_layout(),
         annotations=[{
             "text": message,
             "xref": "paper", "yref": "paper",
             "x": 0.5, "y": 0.5,
             "showarrow": False,
-            "font": {"size": 13, "color": "#4a5568"},
+            "font": {"size": 13, "color": "#9CA3AF"},
         }],
         margin={"l": 12, "r": 12, "t": 12, "b": 12},
     )

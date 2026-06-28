@@ -1,8 +1,8 @@
 site_name: CropForge
 site_description: Open-source, code-first virtual farm runtime for agricultural researchers
 site_url: https://cropforge.readthedocs.io
-repo_url: https://github.com/saswat/cropforge
-repo_name: saswat/cropforge
+repo_url: https://github.com/saswatsundar123/cropforge
+repo_name: saswatsundar123/cropforge
 
 theme:
   name: material
@@ -48,8 +48,12 @@ nav:
     - Events: reference/events.md
   - Features:
     - Opt-In Physics: features/physics.md
+  - Plugins:
+    - Official Plugins: plugins.md
   - Tutorials:
     - Maize Dual-Plot: tutorials/maize_dual_plot.md
     - Irrigation Trial & Slope Leaching: tutorials/irrigation_and_leaching.md
+    - Disease Modeling: tutorials/disease_modeling.md
+    - Multi-Season Rotation: tutorials/multi_season_rotation.md
   - PRD: prd.md
   - Changelog: changelog.md

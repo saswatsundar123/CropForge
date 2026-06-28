@@ -1,60 +1,203 @@
 # Opt-In Physics
 
-CropForge v0.2.0 introduces **Opt-In Physics**, providing built-in, mathematically verified biological solvers that can be enabled with a single decorator.
+CropForge v0.2.0 introduced **Opt-In Physics** — pre-built, mathematically verified solvers that plug into the simulation's negative phase execution slots. v0.5.0 extends this with two new advanced engines: **Beer-Lambert Radiation Interception** and **Wind-driven Spatial Disease Spread**.
 
 ## The Philosophy
 
-CropForge was originally built to let researchers write their *own* mathematical models in Python. However, many models require standard environmental and soil calculations (like ET0 or root impedance). Writing these from scratch for every experiment is tedious.
+CropForge was built to let researchers write their *own* mathematical models in Python. However, many models require standard environmental, soil, or epidemiological calculations. Writing these from scratch for every experiment is tedious and error-prone.
 
-Opt-In Physics provides standard, robust implementations of these solvers. Importantly, they are *opt-in*. If you don't enable them, CropForge behaves exactly as it did in v0.1.0—as a blank canvas for your custom math.
+Opt-In Physics provides standard, robust implementations. Crucially, they are **gated** — if you never call `farm.use_physics()`, CropForge behaves identically to v0.1.0: a blank canvas for your own math.
 
-## The `@farm.use_physics()` Decorator
+---
 
-You can enable built-in physics solvers by decorating your farm instance:
+## Enabling Physics
+
+All engines are enabled through a single call before `farm.run()`:
 
 ```python
-from cropforge import Farm
-
-farm = Farm("MyFarm")
-
-@farm.use_physics(et0=True, root_impedance=True)
-def init_physics():
-    pass
+farm.use_physics(
+    et0=True,               # FAO-56 Penman-Monteith ET0
+    root_impedance=True,    # Soil penetration resistance
+    water_balance=True,     # Soil water balance (requires et0=True)
+    radiation=True,         # Beer-Lambert light interception (v0.5.0)
+    disease=True,           # Wind-anisotropic SIR disease spread (v0.5.0)
+    # --- disease configuration ---
+    disease_foci=[(15, 15)],
+    disease_wind_direction_deg=270.0,
+    disease_spread_rate=0.20,
+)
 ```
 
-### FAO-56 Penman-Monteith ET0 (`et0=True`)
-When `et0=True` is provided, CropForge automatically registers a built-in step function that runs at `phase=-2`. This function reads the daily weather data and calculates the reference evapotranspiration (ET0) using the FAO-56 Penman-Monteith equation. The result is written to `EnvironmentState.et0_mm` (along with intermediate variables like `vp_kpa`, `psychrometric_kpa`, `slope_svp`, and `net_radiation_mj`).
+No decorator syntax is needed. Any combination of engines can be enabled independently.
 
-### Root Impedance (`root_impedance=True`)
-When `root_impedance=True` is provided, CropForge registers a built-in step function at `phase=-1`. This step simulates physical soil constraints on root growth. It maps the current root depth to the soil grid's penetration resistance and calculates a `root_growth_multiplier`. If the penetration resistance is $\ge 2.5$ MPa, root growth is severely restricted (multiplier $\to 0.0$).
+---
 
-## Backward Compatibility via Negative Phases
+## Execution Order
 
-The core innovation of the Opt-In Physics architecture is the use of negative phases.
+Physics engines run at **negative phases**, guaranteed before any researcher `@farm.step` (which default to `phase=0` or higher):
 
-User-defined `@farm.step` functions default to `phase=0`. By scheduling the built-in physics solvers at `phase=-2` (Environment) and `phase=-1` (Soil), we guarantee that they execute *before* any of the user's custom plant logic. 
+| Phase | Engine |
+|-------|--------|
+| `-4`  | Lateral flow + nitrogen transport |
+| `-3`  | Soil water balance (FAO-56 hydrology) |
+| `-2`  | ET0 Penman-Monteith + Radiation Interception |
+| `-1`  | Root impedance + Spatial disease spread |
+| `0+`  | Researcher `@farm.step` functions |
 
-This means a researcher can enable Opt-In Physics and immediately use `state.env.et0_mm` or `plant.root_growth_multiplier` in their `phase=0` custom steps, without altering the execution order or breaking legacy scripts.
+---
 
-## ⚠️ Water Stress Coupling — Manual Wiring Required (v0.2.0)
+## FAO-56 Penman-Monteith ET0 (`et0=True`)
 
-> **Important for v0.2.0 users.** ET₀ computation and plant stress coupling are **separate concerns**.
+Reads daily weather from `EnvironmentState` and computes reference evapotranspiration. Writes:
 
-In v0.2.0, enabling `use_physics(et0=True)` correctly computes `EnvironmentState.et0_mm` every day using the FAO-56 Penman-Monteith equation. However, **this value does not automatically affect `PlantState.stress_index`**. The engine calculates evapotranspiration demand but does not yet implement a soil water balance to determine how much of that demand is met.
+- `env.et0_mm` — reference ET (mm/day)
+- `env.vp_kpa`, `env.psychrometric_kpa`, `env.slope_svp`, `env.net_radiation_mj` — FAO-56 intermediates
 
-If you need stress coupling in v0.2.0, you must wire it manually in your `@farm.step` function:
+---
+
+## Root Impedance (`root_impedance=True`)
+
+Maps each plant's `root_depth_cm` to the soil grid's `penetration_resistance`. Writes `plant.root_growth_multiplier`:
+
+- `1.0` — unrestricted growth
+- `→ 0.0` — hard-pan block when resistance ≥ 2.5 MPa
+
+---
+
+## Soil Water Balance (`water_balance=True`)
+
+Closes the ET₀ → soil moisture → plant stress loop automatically. Requires `et0=True`. Computes daily drainage, runoff, and writes `Ks` (water stress coefficient) to soil voxels.
+
+---
+
+## Beer-Lambert Radiation Interception (`radiation=True`) — *v0.5.0*
+
+Implements the standard canopy light interception equation for every living plant:
+
+$$\text{PAR}_{\text{int}} = \text{solar\_rad} \times 0.5 \times \left(1 - e^{-k \times \text{LAI}}\right)$$
+
+where:
+
+- `solar_rad` = `env.radiation_mj_m2` (MJ m⁻² day⁻¹)
+- `0.5` = PAR fraction of total solar radiation
+- `k` = extinction coefficient (default `0.45` for C3 crops; use `0.50` for C4/maize)
+- `LAI` = `plant.lai`
+
+**Output:** `plant.custom['intercepted_par_mj']` — readable by any plugin or `@farm.step`.
+
+### Enabling
 
 ```python
-@farm.step(phase=1)
-def compute_stress(state, env):
-    # Manual ET0 → stress wiring (v0.2.0 workaround)
-    # This is a simplified example; use your own empirical coefficients.
+farm.use_physics(radiation=True, k_extinction=0.45)
+```
+
+### Reading the result in a plugin or step
+
+```python
+@farm.step(interval="daily")
+def use_par(state, env):
     for plant in state.plants:
-        if env.et0_mm > 0:
-            # Fraction of ET demand unmet (no soil water available yet)
-            unmet_fraction = min(1.0, env.et0_mm / 10.0)
-            plant.stress_index = min(1.0, plant.stress_index + unmet_fraction * 0.05)
+        par = plant.custom.get("intercepted_par_mj", 0.0)
+        # Use intercepted PAR for RUE-based biomass accumulation
+        delta_biomass = par * 1.5  # example: RUE = 1.5 g/MJ
+        plant.biomass_g += delta_biomass
     return state
 ```
 
-**This limitation is resolved in v0.3.0** by the Soil Water Balance subsystem, which will automatically close the ET₀ → soil moisture → plant stress loop. When `use_physics(soil_water_balance=True)` is enabled in v0.3.0, `plant.stress_index` will be updated automatically — no manual wiring required.
+### Backward compatibility
+
+When `radiation=False` (the default), `plant.custom` will never have an `intercepted_par_mj` key. Always use `.get("intercepted_par_mj", 0.0)` in any code that may run with or without this engine.
+
+---
+
+## Wind-driven Anisotropic Disease Spread (`disease=True`) — *v0.5.0*
+
+A spatially explicit **SIR (Susceptible–Infected–Resistant) grid model** that simulates disease or pest pressure propagating across the plant grid.
+
+### The model
+
+Each plant has one of three states stored in `plant.custom['disease_state']`:
+
+| State | Meaning |
+|-------|---------|
+| `'S'` | Susceptible (default; healthy) |
+| `'I'` | Infected (spreading; accumulating stress) |
+| `'R'` | Resistant / removed |
+
+Each day, every infected plant attempts to infect its 4-connected neighbours. The **probability is weighted by wind direction**: downwind neighbours receive a much higher infection probability than upwind neighbours.
+
+### Wind direction convention
+
+`disease_wind_direction_deg` follows the **meteorological bearing**: the direction *from* which the wind blows.
+
+| Value | Wind from | Spreads toward |
+|-------|-----------|----------------|
+| `0°`  | North     | South |
+| `90°` | East      | West |
+| `180°`| South     | North |
+| `270°`| West      | **East** ← typical trial scenario |
+
+### Enabling
+
+```python
+farm.use_physics(
+    disease=True,
+    disease_foci=[(15, 15)],          # (row, col) infected on Day 1
+    disease_spread_rate=0.15,          # base daily infection probability
+    disease_latency_days=5,            # days before plant becomes contagious
+    disease_stress_increment=0.04,     # daily stress_index increase per infected plant
+    disease_wind_direction_deg=270.0,  # wind from West → spreads East
+    disease_anisotropy=0.80,           # 0=isotropic, 1=fully directional
+    disease_seed=42,                   # optional reproducibility seed
+)
+```
+
+Or seed the outbreak on a specific day using the Event system:
+
+```python
+from cropforge.events import Event
+
+@farm.add_event(Event.custom(field="MyField", day=40))
+def introduce_blight(field_state, env_state):
+    center = next(p for p in field_state.plants if p.row == 15 and p.col == 15)
+    center.custom["disease_state"] = "I"
+    center.custom["days_infected"]  = 0
+    center.custom["disease_stress"] = 0.0
+    return field_state
+```
+
+### Schema keys written (`plant.custom`)
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `disease_state` | `str` | `'S'`, `'I'`, or `'R'` |
+| `disease_stress` | `float` | Cumulative disease stress (0–1) |
+| `days_infected` | `int` | Days since first infection |
+
+`disease_stress` integrates into `plant.stress_index` automatically (at 50% weight) to couple disease pressure with the growth model.
+
+### Backward compatibility
+
+When `disease=False` (the default), no `disease_state` key is ever written. Always use `.get("disease_state", "S")` in portable code.
+
+---
+
+## Combining Engines
+
+All engines are fully composable. A complete v0.5.0 research setup:
+
+```python
+farm.use_physics(
+    et0=True,
+    water_balance=True,
+    root_impedance=True,
+    radiation=True,
+    k_extinction=0.45,
+    disease=True,
+    disease_foci=[(10, 10)],
+    disease_wind_direction_deg=270.0,
+    disease_spread_rate=0.20,
+)
+```
+
+See [`examples/disease_outbreak_trial.py`](https://github.com/saswatsundar123/cropforge/blob/main/examples/disease_outbreak_trial.py) for a complete working script and the [Disease Modeling Tutorial](../tutorials/disease_modeling.md) for a step-by-step walkthrough.
