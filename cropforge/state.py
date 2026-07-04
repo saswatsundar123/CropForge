@@ -25,9 +25,12 @@ Licence: MIT
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from cropforge.terrain import Terrain
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +89,12 @@ class SoilVoxelState:
     bulk_density: float
     penetration_resistance: float
 
+    # v0.6.0 -- land preparation soil-property deltas (PRD v0.6.0 §6.6)
+    # Computed once at sim start by LandPrep.apply(); default 0.0 preserves v0.5.0 compatibility.
+    porosity_delta: float = 0.0
+    bulk_density_delta: float = 0.0
+    surface_roughness_index: float = 0.0  # ponytail: computed but not consumed by physics until v0.7.0
+
     custom: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -102,6 +111,10 @@ class FieldState:
     soil: List[List[List[SoilVoxelState]]]   # [row][col][layer]
     elevation_grid: np.ndarray               # shape (n_rows, n_cols), float64
     events_fired: List[str]
+
+    # v0.6.0 -- terrain geometry (PRD v0.6.0 §5.6)
+    # None means flat field -- zero behaviour change from v0.5.0.
+    terrain: Optional["Terrain"] = None
 
     custom: Dict[str, Any] = field(default_factory=dict)
 

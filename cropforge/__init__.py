@@ -11,7 +11,7 @@ Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, Event, ...`
 from cropforge.crop import Crop
@@ -27,6 +27,15 @@ from cropforge._plugins_base import (
     list_plugins,
 )
 from cropforge.compare import compare
+from cropforge.terrain import Terrain
+from cropforge.land_prep import (
+    LandPrep,
+    RidgeFurrow,
+    ContourBund,
+    Terrace,
+    ZeroTillage,
+    ConventionalTill,
+)
 
 __all__ = [
     "Farm",
@@ -46,5 +55,12 @@ __all__ = [
     "get_plugin",
     "list_plugins",
     "compare",
+    "Terrain",
+    "LandPrep",
+    "RidgeFurrow",
+    "ContourBund",
+    "Terrace",
+    "ZeroTillage",
+    "ConventionalTill",
     "__version__",
 ]

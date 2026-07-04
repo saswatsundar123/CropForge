@@ -476,6 +476,27 @@ def _execute_run(farm: "Farm", days: int) -> None:
         # Flush all collected data to Parquet
         state_log.flush()
 
+        # v0.6.0 — Write terrain grids to terrain.json next to the Parquet log.
+        # elevation_grid on each field is the modified grid (land prep applied).
+        # The visualiser reads this to deform the Three.js ground plane.
+        import json as _json
+        _terrain_data = {}
+        for _f in farm._fields:
+            if _f._field_state is not None:
+                _elev = _f._field_state.elevation_grid
+            else:
+                _elev = _f.elevation_grid
+            _res = _f._terrain.resolution_m if _f._terrain is not None else 1.0
+            _terrain_data[_f.name] = {
+                "rows": int(_elev.shape[0]),
+                "cols": int(_elev.shape[1]),
+                "resolution_m": float(_res),
+                "elevation_flat": _elev.flatten().tolist(),
+            }
+        _terrain_path = Path(state_log.log_path) / "terrain.json"
+        _terrain_path.write_text(_json.dumps(_terrain_data), encoding="utf-8")
+        logger.info("Terrain grid written to %s", _terrain_path)
+
         # Update _day_offset so Season 2 Parquet day numbers are continuous.
         # Season 1 runs 10 days → _day_offset becomes 10.
         # Season 2 runs 10 days → Parquet days 11-20 (_day_offset will become 20).

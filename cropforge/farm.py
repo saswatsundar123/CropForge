@@ -177,6 +177,12 @@ class Field:
         # Back-reference to the owning Farm — set by farm.add_field(), used by use_plugin()
         self._farm: Optional[Any] = None
 
+        # v0.6.0 -- Terrain object (None = flat, backward compatible)
+        self._terrain: Optional[Any] = None
+
+        # v0.6.0 -- Land preparation modifier (None = no modification)
+        self._land_prep: Optional[Any] = None
+
     # ------------------------------------------------------------------
     # Attachment methods (PRD Section 6.1)
     # ------------------------------------------------------------------
@@ -327,6 +333,9 @@ class Field:
                 f"dimensions ({self.rows}, {self.cols})."
             )
         self.elevation_grid = dem.astype(np.float64)
+        # v0.6.0 -- also update the Terrain wrapper so FieldState.terrain stays consistent
+        from cropforge.terrain import Terrain as _Terrain
+        self._terrain = _Terrain.from_array(self.elevation_grid)
 
     @staticmethod
     def elevation_from_csv(path: str) -> np.ndarray:
@@ -343,6 +352,44 @@ class Field:
         raise NotImplementedError(
             "Field.elevation_from_csv() will be implemented in Phase 1 loaders."
         )
+
+    def set_terrain(self, terrain: Any) -> None:
+        """Attach a :class:`~cropforge.terrain.Terrain` object to this field (PRD v0.6.0 §5).
+
+        The terrain's ``elevation_grid`` supersedes any previous
+        ``set_elevation()`` call.  Also updates ``self.elevation_grid`` so
+        the existing D8 lateral flow engine continues to work unchanged.
+
+        Parameters
+        ----------
+        terrain:
+            A :class:`cropforge.terrain.Terrain` instance.
+        """
+        from cropforge.terrain import Terrain as _Terrain
+        if not isinstance(terrain, _Terrain):
+            raise TypeError(f"Expected a Terrain instance, got {type(terrain).__name__}.")
+        self._terrain = terrain
+        self.elevation_grid = terrain.elevation_grid.astype(np.float64)
+
+    def set_land_prep(self, modifier: Any) -> None:
+        """Attach a :class:`~cropforge.land_prep.LandPrep` modifier to this field (PRD v0.6.0 §6).
+
+        The modifier's ``apply()`` method is called once at ``farm.run()``
+        start, transforming the base elevation grid. The base terrain object
+        is preserved unchanged; the *modified* grid feeds the D8 engine.
+
+        Parameters
+        ----------
+        modifier:
+            A :class:`cropforge.land_prep.LandPrep` instance.
+        """
+        from cropforge.land_prep import LandPrep as _LandPrep
+        if not isinstance(modifier, _LandPrep):
+            raise TypeError(
+                f"Expected a LandPrep instance, got {type(modifier).__name__}. "
+                "Subclass cropforge.land_prep.LandPrep and override apply()."
+            )
+        self._land_prep = modifier
 
     def use_plugin(self, plugin_cls: type, phase: int = 0, **kwargs) -> None:
         """Attach a :class:`~cropforge.plugins.CropPlugin` to this field.
@@ -479,17 +526,40 @@ class Field:
                 for r in range(self.rows)
             ]
 
+        # v0.6.0 -- Apply land preparation modifier if set.
+        # Modifies the elevation grid used by D8; base terrain.elevation_grid is unchanged.
+        resolution_m = self._terrain.resolution_m if self._terrain is not None else 1.0
+        effective_elevation = self.elevation_grid.copy()
+        _soil_deltas: dict = {}
+        if self._land_prep is not None:
+            effective_elevation, _soil_deltas = self._land_prep.apply(
+                effective_elevation, resolution_m
+            )
+
         self._field_state = FieldState(
             day=day,
             plants=plants,
             soil=soil,
-            elevation_grid=self.elevation_grid.copy(),
+            elevation_grid=effective_elevation,
             events_fired=[],
+            terrain=self._terrain,
         )
         # Apply water balance parameters to all voxels if configured
         self._apply_water_params_to_state(self._field_state)
         self._apply_nitrogen_params_to_state(self._field_state)
+        # Stamp land prep soil property deltas onto every voxel (PRD v0.6.0 §6.5)
+        if _soil_deltas:
+            self._apply_land_prep_deltas(self._field_state, _soil_deltas)
         return self._field_state
+
+    def _apply_land_prep_deltas(self, state: "FieldState", deltas: dict) -> None:
+        """Stamp land-prep soil property deltas into every SoilVoxelState."""
+        for row_soils in state.soil:
+            for cell_soils in row_soils:
+                for voxel in cell_soils:
+                    for key in ("porosity_delta", "bulk_density_delta", "surface_roughness_index"):
+                        if key in deltas:
+                            setattr(voxel, key, float(deltas[key]))
 
     def __repr__(self) -> str:
         crop_str = repr(self.crop) if self.crop else "None"

@@ -15,6 +15,16 @@ pip install cropforge
 
 ---
 
+## What's New in v0.6.0
+
+### 3D Topography and Land Preparation
+- **Terrain Engine:** Supports procedural generation, CSV import, and GeoTIFF ingestion for 3D elevation grids.
+- **Land Preparation:** Pre-simulation agronomic modifiers (`RidgeFurrow`, `ContourBund`, `Terrace`, `DeepTillage`, `ConservationTillage`) shape the land and alter soil physics.
+- **D8 Hydrology Coupling:** The physics engine natively routes lateral water and nutrient flows across the modified topography using the D8 steepest-descent algorithm.
+- **3D Dashboard Modal:** A high-performance WebGL viewport seamlessly transitions from 2D heatmaps to an interactive 3D terrain viewer, letting you map agronomic variables (Nitrogen, Moisture) directly onto physical crop instances.
+
+---
+
 ## What's New in v0.5.0
 
 ### White Minimal Scientific Dashboard

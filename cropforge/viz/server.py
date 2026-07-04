@@ -233,6 +233,53 @@ def create_fastapi_app(
                 },
             }
 
+    @api.get("/api/buffer/terrain")
+    async def buffer_terrain(
+        field: Optional[str] = Query(None, description="Field name (default: first field)"),
+    ):
+        """Return the (modified) elevation grid for a field as a flat JSON array.
+
+        PRD v0.6.0 §7 — terrain binary stream.
+        The returned grid is the effective elevation after any LandPrep modifier
+        has been applied (not the raw DEM), so the Three.js ground plane
+        displays furrows/terraces/bunds exactly as the D8 engine sees them.
+
+        Response JSON:
+            {
+              "rows": int,
+              "cols": int,
+              "resolution_m": float,
+              "elevation_flat": [float, ...]   // rows*cols values, row-major
+            }
+        Returns a flat zero grid if no terrain data was written (flat field).
+        """
+        from cropforge.viz.app import _DATA
+
+        terrain_all = _DATA.get("terrain")
+
+        # Resolve field name (default = first available)
+        field_names = FIELD_REGISTRY.field_names
+        resolved = field or (field_names[0] if field_names else None)
+
+        if terrain_all and resolved and resolved in terrain_all:
+            return JSONResponse(content=terrain_all[resolved])
+
+        # Fallback: serve a flat zero grid using buffer meta dimensions
+        store = FIELD_REGISTRY.get(field)
+        if store is not None and store.is_ready:
+            n = store.rows * store.cols
+            return JSONResponse(content={
+                "rows": store.rows,
+                "cols": store.cols,
+                "resolution_m": 1.0,
+                "elevation_flat": [0.0] * n,
+            })
+
+        raise HTTPException(
+            status_code=503,
+            detail="No terrain data available and no field store ready.",
+        )
+
     # ---- Serve Three.js static files at /viewport/ --------------------
     if _STATIC_DIR.exists():
         api.mount("/viewport", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

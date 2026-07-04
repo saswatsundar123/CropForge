@@ -31,49 +31,59 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // Globals
 // ---------------------------------------------------------------------------
 
-const API       = window.location.origin;           // same origin as iframe parent
-const FLOATS    = 9;                                 // float32 values per plant
-const BYTES     = FLOATS * 4;                        // bytes per plant
+const API = window.location.origin;           // same origin as iframe parent
+const FLOATS = 9;                                 // float32 values per plant
+const BYTES = FLOATS * 4;                        // bytes per plant
 
-let meta         = null;   // buffer metadata from /api/buffer/meta
-let frames       = {};     // {day: Float32Array}  — all preloaded frames
-let currentDay   = 1;
+let meta = null;   // buffer metadata from /api/buffer/meta
+let terrainGrid = null;   // Float32Array [rows*cols] row-major elevation values (v0.6.0)
+let terrainRows = 0;
+let terrainCols = 0;
+let frames = {};     // {day: Float32Array}  — all preloaded frames
+let currentDay = 1;
 let currentField = null;   // active field name (null = server default)
-let playing      = false;
-let speedMult    = 1;
-let playTimer    = null;
-let mesh         = null;   // THREE.InstancedMesh
-let soilMesh     = null;
+let playing = false;
+let speedMult = 1;
+let playTimer = null;
+let mesh = null;   // THREE.InstancedMesh
+let soilMesh = null;
 let renderer, scene, camera, controls;
 
-// Raycasting
-const raycaster        = new THREE.Raycaster();
-const pointer          = new THREE.Vector2();
-let   selectedInstance = -1;    // instanceId of currently selected plant
-let   selectionBox     = null;  // THREE.LineSegments wireframe around selection
-let   selectionOrigColors = {}; // {instanceId: THREE.Color}  — backup for deselect
+// ponytail: cache terrain elev constants once at init — not per frame, not per plant
+let _terrainEMin = 0.0;
+let _terrainElevScale = 0.0;
+// ponytail: pre-allocated objects reused every frame — avoid GC churn in hot loop
+const _pos = new THREE.Vector3();
+const _quat = new THREE.Quaternion();  // identity, never rotated
+const _scl = new THREE.Vector3();
+const _mat = new THREE.Matrix4();
 
-const dummy     = new THREE.Object3D();
+// Raycasting
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let selectedInstance = -1;    // instanceId of currently selected plant
+let selectionBox = null;  // THREE.LineSegments wireframe around selection
+
 const colourBuf = new THREE.Color();
 
 // ---------------------------------------------------------------------------
 // DOM handles
 // ---------------------------------------------------------------------------
 
-const loader       = document.getElementById('loader');
-const loaderFill   = document.getElementById('loader-bar-fill');
+const loader = document.getElementById('loader');
+const loaderFill = document.getElementById('loader-bar-fill');
 const loaderStatus = document.getElementById('loader-status');
-const hudDay       = document.getElementById('hud-day');
-const hudInfo      = document.getElementById('hud-info');
-const legendTitle  = document.getElementById('legend-title');
-const legendMin    = document.getElementById('legend-min');
-const legendMax    = document.getElementById('legend-max');
-const legendBar    = document.getElementById('legend-bar');
-const varSelect    = document.getElementById('var-select');
-const btnPlay      = document.getElementById('btn-play');
-const btn1x        = document.getElementById('btn-1x');
-const btn2x        = document.getElementById('btn-2x');
-const btn5x        = document.getElementById('btn-5x');
+const hudDay = document.getElementById('hud-day');
+const hudInfo = document.getElementById('hud-info');
+const legendTitle = document.getElementById('legend-title');
+const legendMin = document.getElementById('legend-min');
+const legendMax = document.getElementById('legend-max');
+const legendBar = document.getElementById('legend-bar');
+const varSelect = document.getElementById('var-select');
+const btnPlay = document.getElementById('btn-play');
+const btn1x = document.getElementById('btn-1x');
+const btn2x = document.getElementById('btn-2x');
+const btn5x = document.getElementById('btn-5x');
 
 // ---------------------------------------------------------------------------
 // 1. Bootstrap: fetch metadata, preload all frames
@@ -129,6 +139,24 @@ async function bootstrap(fieldName) {
 
   setStatus('Building 3D scene…', 98);
   await new Promise(r => setTimeout(r, 50));  // yield to let browser paint
+
+  // v0.6.0 — Fetch terrain elevation grid (modified by LandPrep if any)
+  try {
+    const tr = await fetch(`${API}/api/buffer/terrain${fieldParam}`);
+    if (tr.ok) {
+      const td = await tr.json();
+      terrainRows = td.rows;
+      terrainCols = td.cols;
+      const flat = td.elevation_flat;
+      terrainGrid = new Float32Array(flat.length);
+      for (let i = 0; i < flat.length; i++) terrainGrid[i] = flat[i];
+    } else {
+      terrainGrid = null;  // flat fallback
+    }
+  } catch (e) {
+    console.warn('Terrain fetch failed, using flat plane:', e);
+    terrainGrid = null;
+  }
 
   initScene();
   showDay(days[0]);
@@ -210,9 +238,9 @@ function initScene() {
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 0.5;
   sun.shadow.camera.far = 200;
-  sun.shadow.camera.left  = -fieldW * 0.7;
-  sun.shadow.camera.right =  fieldW * 1.3;
-  sun.shadow.camera.top   =  fieldD * 1.3;
+  sun.shadow.camera.left = -fieldW * 0.7;
+  sun.shadow.camera.right = fieldW * 1.3;
+  sun.shadow.camera.top = fieldD * 1.3;
   sun.shadow.camera.bottom = -fieldD * 0.7;
   scene.add(sun);
 
@@ -241,14 +269,55 @@ function initScene() {
 }
 
 function buildGroundPlane(fieldW, fieldD) {
-  const geo = new THREE.PlaneGeometry(fieldW + 4, fieldD + 4, 1, 1);
+  // v0.6.0 — Terrain-aware ground: subdivide to rows×cols and deform vertices.
+  const cols = meta.cols;
+  const rows = meta.rows;
+  const spacing = meta.grid_spacing;
+
+  // ponytail: true boundaries of the plant grid, no +4 padding
+  const trueW = (cols - 1) * spacing;
+  const trueD = (rows - 1) * spacing;
+
+  // PlaneGeometry segments map 1:1 with field cells
+  const geo = new THREE.PlaneGeometry(
+    trueW,
+    trueD,
+    Math.max(1, cols - 1),
+    Math.max(1, rows - 1),
+  );
+
+  geo.rotateX(-Math.PI / 2);
+
+  if (terrainGrid && terrainGrid.length === rows * cols) {
+    let eMin = Infinity, eMax = -Infinity;
+    for (let i = 0; i < terrainGrid.length; i++) {
+      if (terrainGrid[i] < eMin) eMin = terrainGrid[i];
+      if (terrainGrid[i] > eMax) eMax = terrainGrid[i];
+    }
+    const eRange = eMax - eMin || 1.0;
+    const elevScale = Math.min(3.0, (cols * spacing) * 0.15) / eRange;
+
+    // Cache for use in showDay — computed once here, never again
+    _terrainEMin = eMin;
+    _terrainElevScale = elevScale;
+
+    const pos = geo.attributes.position;
+    for (let vi = 0; vi < pos.count; vi++) {
+      // ponytail: vertices map exactly to row-major terrainGrid
+      const elev = (terrainGrid[vi] - eMin) * elevScale;
+      pos.setY(vi, elev - 0.02);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+
   const mat = new THREE.MeshLambertMaterial({
-    color: 0xEAEAEA,
+    color: 0xC8A97E,
     side: THREE.FrontSide,
   });
   soilMesh = new THREE.Mesh(geo, mat);
-  soilMesh.rotation.x = -Math.PI / 2;
-  soilMesh.position.set(fieldW * 0.5 - 0.5, -0.02, fieldD * 0.5 - 0.5);
+  // Center plane precisely over the plant grid bounds
+  soilMesh.position.set(trueW / 2, 0.0, trueD / 2);
   soilMesh.receiveShadow = true;
   scene.add(soilMesh);
 }
@@ -256,19 +325,19 @@ function buildGroundPlane(fieldW, fieldD) {
 function buildInstancedMesh() {
   const n = meta.n_plants;
 
-  // Cylinder: height=1 (scaled per instance), radius=1 (scaled per instance)
-  // radialSegments=6 → hexagonal prism (fast, looks like a plant stem)
+  // Cylinder: height=1, radius=1 — origin at centre.
+  // ponytail: do NOT translate — we offset position.y by half height in showDay
+  //           so the base stays on terrain at any scale.
   const geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1);
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-
-  // Use instanced colour buffer attribute
-  const colours = new Float32Array(n * 3);
-  geo.setAttribute('color', new THREE.InstancedBufferAttribute(colours, 3));
+  const mat = new THREE.MeshLambertMaterial(); // Removed vertexColors: true to allow instanceColor to work correctly
 
   mesh = new THREE.InstancedMesh(geo, mat, n);
   mesh.castShadow = true;
   mesh.receiveShadow = false;
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  // Frustum culling: Three.js culls the whole InstancedMesh at bounding-sphere level.
+  // computeBoundingSphere() is called after first showDay to get accurate bounds.
+  mesh.frustumCulled = true;
   scene.add(mesh);
 }
 
@@ -276,44 +345,80 @@ function buildInstancedMesh() {
 // 3. Apply a binary frame to the InstancedMesh
 // ---------------------------------------------------------------------------
 
+// ponytail: LOD distance threshold — beyond this, dead plants are skipped entirely.
+// Upgrade path: separate billboard InstancedMesh when profiler shows >30% overdraw.
+const _LOD_DEAD_SKIP_SQ = 60 * 60;  // 60 world units squared
+
 function showDay(day) {
   const frame = frames[day];
   if (!frame || !mesh) return;
 
   currentDay = day;
   const n = meta.n_plants;
+  const cols = meta.cols;
+  const minScale = 0.05;
+  const minRadius = 0.08;
+
+  // Camera position for LOD distance check
+  const camX = camera.position.x;
+  const camZ = camera.position.z;
 
   for (let i = 0; i < n; i++) {
     const base = i * FLOATS;
 
     const x      = frame[base + 0];
-    const halfH  = frame[base + 1];
+    // frame[base+1] = halfH (legacy, kept for selection box compat)
     const z      = frame[base + 2];
     const scaleY = frame[base + 3];
     const radius = frame[base + 4];
-    let   r      = frame[base + 5];
-    let   g      = frame[base + 6];
-    let   b      = frame[base + 7];
-    // alive = frame[base + 8]  (informational)
+    let r = frame[base + 5];
+    let g = frame[base + 6];
+    let b = frame[base + 7];
+    const alive = frame[base + 8];
 
-    // Keep the highlight colour for the selected plant
-    if (i === selectedInstance) {
-      r = 1.0; g = 1.0; b = 0.0;  // bright yellow highlight
+    // LOD: skip dead plants beyond threshold — they're invisible at distance anyway
+    if (!alive) {
+      const dx = x - camX, dz = z - camZ;
+      if (dx * dx + dz * dz > _LOD_DEAD_SKIP_SQ) {
+        // Write a zero-scale matrix so the instance collapses to a point (no rasterization)
+        _scl.set(0, 0, 0);
+        _pos.set(x, 0, z);
+        _mat.compose(_pos, _quat, _scl);
+        mesh.setMatrixAt(i, _mat);
+        continue;
+      }
     }
 
-    // Build transform: translate to (x, halfH, z), scale (radius, scaleY, radius)
-    // Minimum scale enforced so plants are always visible even at Day 1 low-biomass
-    const minScale = 0.05;
-    const minRadius = 0.08;
-    dummy.position.set(x, Math.max(halfH, minScale * 0.5), z);
-    dummy.scale.set(Math.max(radius, minRadius), Math.max(scaleY, minScale), Math.max(radius, minRadius));
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
+    // Terrain Y — cached from buildGroundPlane, no per-frame recompute
+    let elevY = 0.0;
+    if (terrainGrid) {
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      elevY = (_terrainElevScale > 0)
+        ? (terrainGrid[row * terrainCols + col] - _terrainEMin) * _terrainElevScale
+        : 0.0;
+    }
+
+    // Highlight selected plant
+    if (i === selectedInstance) { r = 1.0; g = 1.0; b = 0.0; }
+
+    // matrix.compose with pre-allocated objects — zero GC pressure
+    // position.y = terrain elevation + half the clamped height,
+    // so the BASE of the cylinder always rests on terrain regardless of scale.
+    const clampedH = Math.max(scaleY, minScale);
+    _pos.set(x, elevY + clampedH * 0.5, z);
+    _scl.set(Math.max(radius, minRadius), clampedH, Math.max(radius, minRadius));
+    _mat.compose(_pos, _quat, _scl);
+
+    mesh.setMatrixAt(i, _mat);
     mesh.setColorAt(i, colourBuf.setRGB(r, g, b));
   }
 
   mesh.instanceMatrix.needsUpdate = true;
-  mesh.instanceColor.needsUpdate  = true;
+  mesh.instanceColor.needsUpdate = true;
+
+  // Update bounding sphere after first frame so frustum culling is accurate
+  if (day === meta.days[0]) mesh.geometry.computeBoundingSphere();
 
   // Update selection box position if a plant is selected
   if (selectedInstance >= 0) {
@@ -321,7 +426,7 @@ function showDay(day) {
   }
 
   // HUD
-  hudDay.textContent  = `Day ${day} / ${meta.days[meta.days.length - 1]}`;
+  hudDay.textContent = `Day ${day} / ${meta.days[meta.days.length - 1]}`;
   hudInfo.textContent = `${n} plants  |  ${meta.rows}×${meta.cols} grid`;
 
   // Notify parent Dash app about day change (for scrubber sync)
@@ -339,8 +444,8 @@ function onCanvasClick(event) {
 
   // Prevent firing when OrbitControls has just dragged (use a tiny drag threshold)
   const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width)  * 2 - 1;
-  pointer.y = -((event.clientY - rect.top)  / rect.height) * 2 + 1;
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObject(mesh);
@@ -366,9 +471,9 @@ function selectPlant(instanceId) {
   selectedInstance = instanceId;
 
   // Compute row/col from instanceId (row-major: instanceId = row * cols + col)
-  const row     = Math.floor(instanceId / meta.cols);
-  const col     = instanceId % meta.cols;
-  const plantId = `r${String(row).padStart(2,'0')}c${String(col).padStart(2,'0')}`;
+  const row = Math.floor(instanceId / meta.cols);
+  const col = instanceId % meta.cols;
+  const plantId = `r${String(row).padStart(2, '0')}c${String(col).padStart(2, '0')}`;
 
   // Apply highlight colour (bright yellow)
   mesh.setColorAt(instanceId, colourBuf.setRGB(1.0, 1.0, 0.0));
@@ -384,12 +489,12 @@ function selectPlant(instanceId) {
   // Notify parent Dash app
   if (window.parent !== window) {
     window.parent.postMessage({
-      type:      'PLANT_CLICKED',
-      plant_id:  plantId,
-      row:       row,
-      col:       col,
-      day:       currentDay,
-      instance:  instanceId,
+      type: 'PLANT_CLICKED',
+      plant_id: plantId,
+      row: row,
+      col: col,
+      day: currentDay,
+      instance: instanceId,
     }, '*');
   }
 }
@@ -397,7 +502,7 @@ function selectPlant(instanceId) {
 function restorePlantColour(instanceId) {
   if (!frames[currentDay] || selectedInstance < 0) return;
   const frame = frames[currentDay];
-  const base  = instanceId * FLOATS;
+  const base = instanceId * FLOATS;
   const r = frame[base + 5];
   const g = frame[base + 6];
   const b = frame[base + 7];
@@ -426,10 +531,10 @@ function clearSelection() {
 function updateSelectionBox(instanceId, frame) {
   removeSelectionBox();
 
-  const base   = instanceId * FLOATS;
-  const cx     = frame[base + 0];          // x centre
-  const halfH  = frame[base + 1];
-  const cz     = frame[base + 2];          // z centre
+  const base = instanceId * FLOATS;
+  const cx = frame[base + 0];          // x centre
+  const halfH = frame[base + 1];
+  const cz = frame[base + 2];          // z centre
   const height = frame[base + 3] || 0.05;
   const radius = frame[base + 4] || 0.15;
 
@@ -444,8 +549,18 @@ function updateSelectionBox(instanceId, frame) {
     linewidth: 2,
     depthTest: false,
   });
+
+  const row = Math.floor(instanceId / meta.cols);
+  const col = instanceId % meta.cols;
+  let elevY = 0.0;
+  if (terrainGrid) {
+    elevY = (_terrainElevScale > 0)
+      ? (terrainGrid[row * terrainCols + col] - _terrainEMin) * _terrainElevScale
+      : 0.0;
+  }
+
   selectionBox = new THREE.LineSegments(edges, mat);
-  selectionBox.position.set(cx, halfH, cz);
+  selectionBox.position.set(cx, elevY + halfH, cz);
   selectionBox.renderOrder = 999;
   scene.add(selectionBox);
 }
@@ -507,21 +622,21 @@ function updateLegendMeta() {
   if (!meta) return;
   const v = meta.variable || 'biomass_g';
   const labels = {
-    biomass_g:   'Biomass (g/plant)',
-    lai:         'LAI (m²/m²)',
-    height_cm:   'Height (cm)',
-    stress_index:'Stress Index',
+    biomass_g: 'Biomass (g/plant)',
+    lai: 'LAI (m²/m²)',
+    height_cm: 'Height (cm)',
+    stress_index: 'Stress Index',
   };
   const gradients = {
-    biomass_g:    'linear-gradient(90deg, #d4a60a, #2e8b57)',
-    lai:          'linear-gradient(90deg, #8fbc00, #228b22)',
-    height_cm:    'linear-gradient(90deg, #5599cc, #003399)',
+    biomass_g: 'linear-gradient(90deg, #d4a60a, #2e8b57)',
+    lai: 'linear-gradient(90deg, #8fbc00, #228b22)',
+    height_cm: 'linear-gradient(90deg, #5599cc, #003399)',
     stress_index: 'linear-gradient(90deg, #2e8b57, #cc2200)',
   };
-  legendTitle.textContent     = labels[v] || v;
-  legendBar.style.background  = gradients[v] || gradients.biomass_g;
-  legendMin.textContent       = (meta.vmin || 0).toFixed(1);
-  legendMax.textContent       = (meta.vmax || 0).toFixed(1);
+  legendTitle.textContent = labels[v] || v;
+  legendBar.style.background = gradients[v] || gradients.biomass_g;
+  legendMin.textContent = (meta.vmin || 0).toFixed(1);
+  legendMax.textContent = (meta.vmax || 0).toFixed(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +649,7 @@ function startPlayback() {
   const intervalMs = Math.round(1000 / fps);
   playTimer = setInterval(() => {
     const days = meta.days;
-    const idx  = days.indexOf(currentDay);
+    const idx = days.indexOf(currentDay);
     const next = days[(idx + 1) % days.length];
     showDay(next);
   }, intervalMs);
@@ -609,7 +724,7 @@ window.addEventListener('message', (event) => {
       renderer = null;
     }
     scene = null; camera = null; controls = null; mesh = null; soilMesh = null;
-    frames = {}; meta = null;
+    frames = {}; meta = null; terrainGrid = null; terrainRows = 0; terrainCols = 0;
 
     // Show loader again before re-bootstrapping
     loader.style.display = 'flex';

@@ -51,6 +51,7 @@ _DATA: Dict[str, Optional[pd.DataFrame]] = {
     "soil":     None,
     "env":      None,
     "log_path": None,
+    "terrain":  None,   # v0.6.0 — {field_name: {rows, cols, resolution_m, elevation_flat}}
 }
 
 
@@ -129,6 +130,18 @@ def _load_parquet(log_path: str) -> None:
                 logger.exception("Failed to load %s Parquet from %s", table_name, subdir)
         else:
             logger.warning("Parquet subdirectory not found: %s", subdir)
+
+    # v0.6.0 — Load terrain grids written by runtime.py at simulation end.
+    import json as _json
+    _terrain_file = p / "terrain.json"
+    if _terrain_file.exists():
+        try:
+            _DATA["terrain"] = _json.loads(_terrain_file.read_text(encoding="utf-8"))
+            logger.info("Loaded terrain.json from %s (%d fields)", _terrain_file, len(_DATA["terrain"]))
+        except Exception:
+            logger.exception("Failed to load terrain.json from %s", _terrain_file)
+    else:
+        logger.info("No terrain.json found at %s — flat terrain assumed.", p)
 
 
 
@@ -314,6 +327,15 @@ def create_dash_app(log_path: str):
         {"label": "LAI (m2/m2)",          "value": "lai"},
         {"label": "Height (cm)",          "value": "height_cm"},
         {"label": "Stress Index",         "value": "stress_index"},
+    ]
+
+    # v0.6.0 — Terrain surface overlay: soil/env variables draped over elevation
+    terrain_overlay_options = [
+        {"label": "Elevation only",        "value": "__elevation__"},
+        {"label": "Soil Moisture (%)",     "value": "moisture_pct"},
+        {"label": "Nitrogen (kg/ha)",      "value": "nitrogen_kg_ha"},
+        {"label": "Biomass (g/plant)",     "value": "biomass_g"},
+        {"label": "Stress Index",          "value": "stress_index"},
     ]
 
     # ---- Day range for scrubber ----------------------------------------
@@ -520,22 +542,24 @@ def create_dash_app(log_path: str):
             background: {BG_SIDEBAR};
             border-right: 1px solid #EAEAEA;
             padding: 24px 20px;
-            /* overflow-y: auto removed — causes dropdown menus to be clipped.
-               Instead the sidebar itself scrolls via a dedicated inner scroller. */
-            overflow: visible;
+            overflow: hidden;     /* grid-stretch sets exact height; this clips overflow */
             display: flex; flex-direction: column; gap: 0;
+            /* ponytail: no height:100% — grid align-items:stretch already fills the row */
+            box-sizing: border-box;
         }}
-        /* Inner scroller so sidebar content can scroll without clipping dropdowns */
+        /* Inner scroller — scrolls sidebar content without clipping dropdowns */
         #cf-sidebar-inner {{
             overflow-y: auto;
             flex: 1;
             min-height: 0;
+            padding-right: 2px;  /* prevent scrollbar from clipping content */
         }}
         #cf-sidebar-logo {{
             display: flex; align-items: center; gap: 10px;
             padding-bottom: 16px;
             border-bottom: 1px solid #E5E7EB;
             margin-bottom: 16px;
+            flex-shrink: 0;  /* never let the logo compress; gives space to inner scroller */
         }}
         #cf-sidebar-logo-mark {{
             width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
@@ -563,6 +587,38 @@ def create_dash_app(log_path: str):
         .cf-sec-3 {{ z-index: 30 !important; }}
         .cf-sec-4 {{ z-index: 20 !important; }}
         .cf-sec-5 {{ z-index: 10 !important; }}
+        .cf-sec-6 {{ z-index: 8  !important; }}  /* terrain toggle button */
+        .cf-sec-7 {{ z-index: 6  !important; }}  /* terrain overlay dropdown */
+
+        /* ---- Terrain map modal (Task 3) -------------------------------- */
+        #terrain-modal-overlay {{
+            display: none;
+            position: fixed; inset: 0; z-index: 1000;
+            background: rgba(0,0,0,0.55);
+            align-items: center; justify-content: center;
+        }}
+        #terrain-modal-overlay.cf-modal-open {{
+            display: flex;
+        }}
+        #terrain-modal-box {{
+            background: {BG_PANEL};
+            border-radius: 12px;
+            width: 82vw; height: 82vh;
+            display: flex; flex-direction: column;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.35);
+            overflow: hidden;
+            animation: cfFadeIn 0.2s cubic-bezier(0.32,0.72,0,1) both;
+        }}
+        #terrain-modal-header {{
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 16px 24px;
+            border-bottom: 1px solid #EAEAEA;
+            flex-shrink: 0;
+        }}
+        #terrain-modal-body {{
+            flex: 1; min-height: 0; padding: 8px 16px 16px;
+            display: flex; flex-direction: column; gap: 10px;
+        }}
         @keyframes cfFadeUp {{
             from {{ opacity: 0; transform: translateY(10px); }}
             to   {{ opacity: 1; transform: translateY(0); }}
@@ -577,67 +633,80 @@ def create_dash_app(log_path: str):
             height: 1px; background: #F3F4F6; margin: 4px 0 18px;
         }}
 
-        /* ---- Dash Dropdown overrides (react-select) ---------------- */
-        /* Force visible text in all dropdown states */
-        .cf-select .Select-control,
-        .cf-select .VirtualizedSelectFocusedOption,
-        .cf-select .VirtualizedSelectOption {{
+        /* ---- Dash Dropdown overrides (Dash 4.x / react-select 5) ---------- */
+        /* Outer container: white background so it is never transparent */
+        .cf-select {{
             background: #FFFFFF !important;
-            border: 1px solid #EAEAEA !important;
             border-radius: 4px !important;
-            font-size: 13px !important;
-            color: {TEXT_PRI} !important;
-            box-shadow: none !important;
         }}
-        .cf-select .Select-control:hover {{
+        /* Control box — the visible input row */
+        .cf-select .dash-dropdown,
+        .cf-select .Select-control,
+        .cf-select div[class$="-container"],
+        .cf-select div[class*="-control"] {{
+            background: #FFFFFF !important;
+            border-color: #EAEAEA !important;
+            border-radius: 4px !important;
+            box-shadow: none !important;
+            min-height: 36px !important;
+            cursor: pointer !important;
+        }}
+        .cf-select .Select-control:hover,
+        .cf-select div[class*="-control"]:hover {{
             border-color: #333333 !important;
         }}
+        /* Selected value text */
         .cf-select .Select-value,
-        .cf-select .Select-value-label {{
+        .cf-select div[class*="-singleValue"] {{
             color: {TEXT_PRI} !important;
             font-size: 13px !important;
             font-weight: 500 !important;
         }}
-        .cf-select .Select-placeholder {{
+        .cf-select .Select-placeholder,
+        .cf-select div[class*="-placeholder"] {{
             color: {TEXT_DIM} !important;
             font-size: 13px !important;
         }}
-        .cf-select .Select-arrow-zone .Select-arrow {{
-            border-top-color: {TEXT_SEC} !important;
-        }}
-        .cf-select .Select-menu-outer {{
+        /* Dropdown menu panel */
+        .cf-select .Select-menu-outer,
+        .cf-select div[class*="-menu"],
+        .cf-select div[class*="-MenuList"] {{
             background-color: #FFFFFF !important;
+            background: #FFFFFF !important;
             border: 1px solid #D1D1D1 !important;
             border-radius: 4px !important;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
-            overflow: hidden;
             z-index: 9999 !important;
         }}
-        .cf-select .Select-menu {{
-            background-color: #FFFFFF !important;
-        }}
-        .cf-select .Select-option {{
+        /* Option rows */
+        .cf-select .Select-option,
+        .cf-select div[class*="-option"] {{
             font-size: 13px !important;
             color: {TEXT_PRI} !important;
+            background-color: #FFFFFF !important;
             background: #FFFFFF !important;
             padding: 8px 14px !important;
+            cursor: pointer !important;
         }}
         .cf-select .Select-option:hover,
-        .cf-select .Select-option.is-focused {{
+        .cf-select .Select-option.is-focused,
+        .cf-select div[class*="-option"]:hover,
+        .cf-select div[class*="-option"][class*="focused"] {{
+            background-color: {ACCENT_XL} !important;
             background: {ACCENT_XL} !important;
             color: {ACCENT} !important;
         }}
-        .cf-select .Select-option.is-selected {{
+        .cf-select .Select-option.is-selected,
+        .cf-select div[class*="-option"][class*="selected"] {{
+            background-color: {ACCENT} !important;
             background: {ACCENT} !important;
             color: #FFFFFF !important;
         }}
-        /* Dash 2.x uses different class names for dropdowns */
-        .cf-select .dropdown .Select-control,
-        .cf-select div[class*="control"] {{
-            background: #FFFFFF !important;
-            border: 1px solid #EAEAEA !important;
-            border-radius: 4px !important;
-            box-shadow: none !important;
+        .cf-select div[class*="-indicatorContainer"] svg {{
+            fill: {TEXT_SEC} !important;
+        }}
+        .cf-select div[class*="-indicatorSeparator"] {{
+            background-color: #EAEAEA !important;
         }}
 
         /* ---- Centre — 3D viewport ---------------------------------- */
@@ -653,6 +722,14 @@ def create_dash_app(log_path: str):
             flex-direction: column;
             min-height: 0;
         }}
+        #cf-viewport iframe {{
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }}
         /* dcc.Loading injects a div wrapper — must also be flex so iframe fills height */
         #cf-viewport > div,
         #viewport-loading,
@@ -663,14 +740,6 @@ def create_dash_app(log_path: str):
             min-height: 0;
             width: 100%;
             position: static; /* Ensure they don't trap absolute positioning */
-        }}
-        #cf-viewport iframe {{
-            position: absolute;
-            inset: 0;
-            width: 100%;
-            height: 100%;
-            border: none;
-            display: block;
         }}
 
         /* ---- Right column ------------------------------------------ */
@@ -834,6 +903,7 @@ def create_dash_app(log_path: str):
                       data=int(day_min)),
             dcc.Store(id="selected-field-store", storage_type="memory",
                       data=default_field),
+            dcc.Store(id="terrain-modal-open",   storage_type="memory", data=False),
             # Polling interval: fires every 250 ms to relay postMessage → Dash store
             dcc.Interval(id="inspector-poll", interval=250, n_intervals=0),
             html.Div(id="plant-msg-trigger", style={"display": "none"}),
@@ -932,9 +1002,26 @@ def create_dash_app(log_path: str):
 
                     html.Div(className="cf-divider"),
 
-                    # -- 3D colour variable ---
+                    # -- Spatial View toggle ---
                     html.Div(className="cf-section cf-sec-2", children=[
-                        html.Span("3D Colour Variable", className="cf-label"),
+                        html.Span("Spatial View", className="cf-label"),
+                        dcc.RadioItems(
+                            id="spatial-view-toggle",
+                            options=[
+                                {"label": "2D Heatmap", "value": "2d"},
+                                {"label": "3D Terrain", "value": "3d"},
+                            ],
+                            value="2d",
+                            className="cf-radio",
+                            labelStyle={"display": "block", "marginBottom": "6px", "fontSize": "12px", "color": TEXT_PRI},
+                        ),
+                    ]),
+
+                    html.Div(className="cf-divider"),
+
+                    # -- 2D Heatmap Variable (only visible when 2d is selected) ---
+                    html.Div(id="heatmap-var-container", className="cf-section cf-sec-3", children=[
+                        html.Span("Heatmap Variable", className="cf-label"),
                         dcc.Dropdown(
                             id="heatmap-variable-dropdown",
                             options=[
@@ -950,10 +1037,22 @@ def create_dash_app(log_path: str):
                         ),
                     ]),
 
-                    html.Div(className="cf-divider"),
+                    # -- 3D Terrain Variable (only visible when 3d is selected) ---
+                    html.Div(id="terrain-var-container", className="cf-section cf-sec-3", style={"display": "none"}, children=[
+                        html.Span("Surface Overlay Variable", className="cf-label"),
+                        dcc.Dropdown(
+                            id="sidebar-terrain-overlay-dropdown",
+                            options=terrain_overlay_options,
+                            value="__elevation__",
+                            clearable=False,
+                            style=_STYLE_SELECT,
+                            className="cf-select",
+                        ),
+                    ]),
 
+                    html.Div(className="cf-divider"),
                     # -- Metrics variable ---
-                    html.Div(className="cf-section cf-sec-3", children=[
+                    html.Div(className="cf-section cf-sec-4", children=[
                         html.Span("Time-Series Metric", className="cf-label"),
                         dcc.Dropdown(
                             id="ts-variable-dropdown",
@@ -976,7 +1075,7 @@ def create_dash_app(log_path: str):
                     html.Div(className="cf-divider"),
 
                     # -- Day scrubber ---
-                    html.Div(className="cf-section cf-sec-4", children=[
+                    html.Div(className="cf-section cf-sec-5", children=[
                         html.Span("Simulation Day", className="cf-label"),
                         dcc.Slider(
                             id="day-scrubber",
@@ -992,7 +1091,7 @@ def create_dash_app(log_path: str):
                     html.Div(className="cf-divider"),
 
                     # -- Event log ---
-                    html.Div(className="cf-section cf-sec-5",
+                    html.Div(className="cf-section cf-sec-6",
                              children=[
                         html.Span("Event Log", className="cf-label"),
                         html.Div(
@@ -1007,6 +1106,58 @@ def create_dash_app(log_path: str):
                     ]),  # end cf-sidebar-inner
 
                 ]),  # end sidebar
+
+                # ============================================================
+                # TERRAIN MODAL OVERLAY (Task 3 — v0.6.0)
+                # Pure CSS modal; opened/closed via clientside callback.
+                # ============================================================
+                html.Div(id="terrain-modal-overlay", children=[
+                    html.Div(id="terrain-modal-box", children=[
+                        html.Div(id="terrain-modal-header", children=[
+                            html.Div([
+                                html.Span("⛰️ ", style={"marginRight": "6px"}),
+                                html.Span("3D Terrain Map", style={
+                                    "fontSize": "13px", "fontWeight": "700",
+                                    "color": TEXT_PRI,
+                                }),
+                            ], style={"display": "flex", "alignItems": "center"}),
+                            html.Div([
+                                # Overlay variable dropdown inside modal
+                                dcc.Dropdown(
+                                    id="terrain-overlay-dropdown",
+                                    options=terrain_overlay_options,
+                                    value="__elevation__",
+                                    clearable=False,
+                                    style={**_STYLE_SELECT,
+                                           "width": "220px", "marginBottom": "0"},
+                                    className="cf-select",
+                                    placeholder="Surface Variable",
+                                ),
+                                html.Button(
+                                    "✕ Close",
+                                    id="close-terrain-modal-btn",
+                                    n_clicks=0,
+                                    className="cf-btn",
+                                    style={"marginLeft": "12px", "fontSize": "12px"},
+                                ),
+                            ], style={"display": "flex", "alignItems": "center"}),
+                        ]),
+                        html.Div(id="terrain-modal-body", children=[
+                            dcc.Graph(
+                                id="terrain-modal-chart",
+                                config={
+                                    "displayModeBar": True,
+                                    "toImageButtonOptions": {
+                                        "format": "png",
+                                        "filename": "cropforge_terrain_3d",
+                                        "height": 900, "width": 1400,
+                                    },
+                                },
+                                style={"height": "100%", "width": "100%", "flex": "1"},
+                            ),
+                        ]),
+                    ]),
+                ]),
 
                 # ============================================================
                 # CENTRE — 3D Field View (PRD §4.3: 52%)
@@ -1065,8 +1216,36 @@ def create_dash_app(log_path: str):
 
                             dcc.Graph(
                                 id="heatmap-chart",
-                                config={"displayModeBar": False},
-                                style={"height": "240px", "width": "100%"},
+                                config={
+                                    "displayModeBar": True,
+                                    "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                                    "toImageButtonOptions": {
+                                        "format": "png",
+                                        "filename": "cropforge_heatmap",
+                                        "height": 600, "width": 900,
+                                    },
+                                },
+                                style={"height": "220px", "width": "100%"},
+                            ),
+
+                            # v0.6.0 — Expand to full 3D Terrain modal
+                            html.Button(
+                                "⛰️ Open 3D Terrain Map",
+                                id="open-terrain-modal-btn",
+                                n_clicks=0,
+                                style={
+                                    "width": "100%",
+                                    "background": "#F9F9F8",
+                                    "border": "1px solid #EAEAEA",
+                                    "borderRadius": "4px",
+                                    "padding": "8px",
+                                    "fontSize": "12px",
+                                    "fontWeight": "600",
+                                    "color": TEXT_SEC,
+                                    "cursor": "pointer",
+                                    "letterSpacing": "0.04em",
+                                    "transition": "background 0.15s",
+                                },
                             ),
                         ]),
                     ]),  # end metrics card
@@ -1250,22 +1429,174 @@ def create_dash_app(log_path: str):
         )
         return fig
 
+    # ------------------------------------------------------------------
+    # v0.6.0 — Terrain modal: toggle open/close via dcc.Store
+    # Two callbacks: (1) button clicks → store, (2) store → overlay style.
+    # ------------------------------------------------------------------
+    @app.callback(
+        Output("terrain-modal-open", "data"),
+        Input("open-terrain-modal-btn",  "n_clicks"),
+        Input("close-terrain-modal-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+    def toggle_terrain_modal(open_clicks, close_clicks):
+        """Open modal on open-btn click; close on close-btn click."""
+        from dash import ctx
+        if not ctx.triggered_id:
+            return False
+        return ctx.triggered_id == "open-terrain-modal-btn"
+
+    @app.callback(
+        Output("terrain-modal-overlay", "style"),
+        Input("terrain-modal-open", "data"),
+        prevent_initial_call=False,
+    )
+    def show_terrain_modal(is_open):
+        """Show/hide the terrain modal overlay div."""
+        if is_open:
+            return {
+                "display": "flex",
+                "position": "fixed", "inset": "0", "zIndex": "1000",
+                "background": "rgba(0,0,0,0.55)",
+                "alignItems": "center", "justifyContent": "center",
+            }
+        return {"display": "none"}
+
+    def _build_terrain_surface(overlay_var: str, day: int, selected_field: str):
+        """v0.6.0 — Helper to render go.Surface for the Terrain Map.
+        z = elevation_grid (physical metres), surfacecolor = overlay variable.
+        """
+        import numpy as np
+
+        terrain_info = None
+        if _DATA["terrain"] and selected_field and selected_field in _DATA["terrain"]:
+            terrain_info = _DATA["terrain"][selected_field]
+
+        if terrain_info is None:
+            return _empty_figure("No terrain data. Run simulation with set_terrain().")
+
+        rows  = terrain_info["rows"]
+        cols  = terrain_info["cols"]
+        res   = terrain_info.get("resolution_m", 1.0)
+        elev_grid = np.array(terrain_info["elevation_flat"]).reshape(rows, cols)
+        x_m = [c * res for c in range(cols)]
+        y_m = [r * res for r in range(rows)]
+
+        # Determine surface colour data and scale
+        if not overlay_var or overlay_var == "__elevation__":
+            surface_color = elev_grid
+            color_label   = "Elevation (m)"
+            colorscale    = [[0.0, "#3b5ea6"], [0.25, "#5da832"],
+                              [0.55, "#c8a45a"], [0.80, "#8b5e3c"], [1.0, "#f5f5f5"]]
+        else:
+            label_map = {
+                "moisture_pct":   "Soil Moisture (%)",
+                "nitrogen_kg_ha": "Nitrogen (kg/ha)",
+                "biomass_g":      "Biomass (g/plant)",
+                "stress_index":   "Stress Index",
+            }
+            color_label = label_map.get(overlay_var, overlay_var)
+            colorscale  = "RdYlGn"
+            surface_color = elev_grid  # fallback
+
+            # Try plants table
+            overlay_src = None
+            if plants_df is not None and not plants_df.empty:
+                day_field = plants_df[
+                    (plants_df["day"] == int(day)) &
+                    (plants_df["field_name"] == selected_field)
+                ]
+                if overlay_var in day_field.columns and not day_field.empty:
+                    overlay_src = day_field
+
+            # Fall back to soil table
+            if overlay_src is None and soil_df is not None and not soil_df.empty:
+                soil_day = soil_df[
+                    (soil_df["day"] == int(day)) &
+                    (soil_df["field_name"] == selected_field) &
+                    (soil_df["layer"] == 0)
+                ]
+                if overlay_var in soil_day.columns and not soil_day.empty:
+                    overlay_src = soil_day
+
+            if overlay_src is not None and not overlay_src.empty:
+                try:
+                    pivot = overlay_src.pivot_table(
+                        index="row", columns="col", values=overlay_var, aggfunc="mean"
+                    )
+                    sc = np.full((rows, cols), float(pivot.values.mean()))
+                    for ri in pivot.index:
+                        for ci in pivot.columns:
+                            if 0 <= int(ri) < rows and 0 <= int(ci) < cols:
+                                sc[int(ri), int(ci)] = pivot.at[ri, ci]
+                    surface_color = sc
+                except Exception:
+                    pass  # keep elevation fallback
+
+        fig = go.Figure(go.Surface(
+            z=elev_grid.tolist(),
+            x=x_m,
+            y=y_m,
+            surfacecolor=surface_color.tolist() if hasattr(surface_color, "tolist") else surface_color,
+            colorscale=colorscale,
+            colorbar=dict(title=color_label, thickness=14, len=0.55),
+            hovertemplate="X: %{x:.1f} m<br>Y: %{y:.1f} m<br>Elev: %{z:.2f} m<extra></extra>",
+        ))
+        fig.update_layout(
+            **_chart_layout(),
+            margin={"l": 0, "r": 0, "t": 32, "b": 0},
+            scene=dict(
+                xaxis=dict(title="East (m)"),
+                yaxis=dict(title="North (m)"),
+                zaxis=dict(title="Elevation (m)"),
+                aspectmode="manual",
+                aspectratio=dict(x=1, y=1, z=0.2),
+                bgcolor="#F9F9F8",
+            ),
+            annotations=[{
+                "text": f"Day {day}  •  {selected_field or ''}",
+                "x": 0.01, "y": 1.0, "xref": "paper", "yref": "paper",
+                "showarrow": False, "font": {"size": 11, "color": "#64748b"},
+                "xanchor": "left",
+            }],
+        )
+        return fig
+
+    @app.callback(
+        Output("heatmap-var-container", "style"),
+        Output("terrain-var-container", "style"),
+        Output("open-terrain-modal-btn", "style"),
+        Input("spatial-view-toggle", "value"),
+    )
+    def toggle_spatial_controls(view_mode):
+        btn_style = {
+            "width": "100%", "background": "#F9F9F8", "border": "1px solid #EAEAEA",
+            "borderRadius": "4px", "padding": "8px", "fontSize": "12px",
+            "fontWeight": "600", "color": TEXT_SEC, "cursor": "pointer",
+            "letterSpacing": "0.04em", "transition": "background 0.15s",
+        }
+        if view_mode == "2d":
+            return {"display": "block"}, {"display": "none"}, {"display": "none", **btn_style}
+        else:
+            return {"display": "none"}, {"display": "block"}, {"display": "block", **btn_style}
+
     @app.callback(
         Output("heatmap-chart", "figure"),
+        Input("spatial-view-toggle", "value"),
         Input("heatmap-variable-dropdown", "value"),
+        Input("sidebar-terrain-overlay-dropdown", "value"),
         Input("day-scrubber", "value"),
         Input("field-selector", "value"),
     )
-    def update_heatmap(variable: str, day: int, selected_field: str):
-        """Panel 2: Update the 2D spatial heatmap for a chosen day and field.
-
-        Filters to the currently selected field so the heatmap always
-        shows the spatial layout of exactly one field at a time.
-        """
+    def update_heatmap(view_mode: str, variable: str, overlay_var: str, day: int, selected_field: str):
+        """Panel 2: Renders either the 2D Heatmap or the 3D Terrain 'mini view'."""
+        if view_mode == "3d":
+            return _build_terrain_surface(overlay_var, day, selected_field)
+            
+        # --- 2D Heatmap Logic ---
         if plants_df is None or plants_df.empty:
             return _empty_figure("No plant data available")
 
-        # Filter by selected field
         field_df = plants_df
         if selected_field:
             field_df = plants_df[plants_df["field_name"] == selected_field]
@@ -1276,7 +1607,6 @@ def create_dash_app(log_path: str):
         if day_data.empty:
             return _empty_figure(f"No data for day {day}")
 
-        # Build pivot grid
         try:
             pivot = day_data.pivot_table(
                 index="row", columns="col", values=variable, aggfunc="mean"
@@ -1296,7 +1626,6 @@ def create_dash_app(log_path: str):
             "height_cm":   "Blues",
             "stress_index":"RdYlGn_r",
         }
-
         fig = go.Figure(go.Heatmap(
             z=pivot.values,
             x=list(pivot.columns),
@@ -1315,25 +1644,27 @@ def create_dash_app(log_path: str):
             yaxis_title="Row",
             margin={"l": 48, "r": 12, "t": 12, "b": 32},
             annotations=[
-                {
-                    "text": f"Day {day}",
-                    "x": 0.98, "y": 0.98,
-                    "xref": "paper", "yref": "paper",
-                    "showarrow": False,
-                    "font": {"size": 12, "color": "#4a9eff"},
-                    "xanchor": "right",
-                },
-                {
-                    "text": selected_field or "",
-                    "x": 0.01, "y": 0.98,
-                    "xref": "paper", "yref": "paper",
-                    "showarrow": False,
-                    "font": {"size": 11, "color": "#64748b"},
-                    "xanchor": "left",
-                },
+                {"text": f"Day {day}", "x": 0.98, "y": 0.98,
+                 "xref": "paper", "yref": "paper", "showarrow": False,
+                 "font": {"size": 12, "color": "#4a9eff"}, "xanchor": "right"},
+                {"text": selected_field or "", "x": 0.01, "y": 0.98,
+                 "xref": "paper", "yref": "paper", "showarrow": False,
+                 "font": {"size": 11, "color": "#64748b"}, "xanchor": "left"},
             ],
         )
         return fig
+
+    @app.callback(
+        Output("terrain-modal-chart", "figure"),
+        Input("open-terrain-modal-btn", "n_clicks"),
+        Input("terrain-overlay-dropdown", "value"),
+        Input("day-scrubber", "value"),
+        Input("field-selector", "value"),
+        prevent_initial_call=False,
+    )
+    def update_terrain_modal(n_clicks, overlay_var: str, day: int, selected_field: str):
+        """v0.6.0 — Render go.Surface for the Terrain Map modal."""
+        return _build_terrain_surface(overlay_var, day, selected_field)
 
     # ------------------------------------------------------------------
     # Clientside callback 1: Dash slider → Three.js iframe (PRD §7.3)
