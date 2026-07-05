@@ -49,7 +49,11 @@ PHASE_ET0_ENGINE        = -2   # Penman-Monteith ET0
 PHASE_ROOT_ENGINE       = -1   # Root impedance multiplier
 # v0.5.0 new phases:
 PHASE_RADIATION_ENGINE  = -2   # Radiation interception (same phase as ET0; runs per-plant)
+PHASE_WIND_ENGINE       = -2   # Topographical wind field (same phase; writes env.custom grid)
 PHASE_DISEASE_ENGINE    = -1   # Spatial SIR disease spread (same phase as root; per-plant)
+PHASE_ROOT_CLAMP        = +1   # Root depth clamping (PRD v0.7.0 §7.3) — runs AFTER all plugins
+PHASE_CLOD_ENGINE       = -4   # Clod dynamics / roughness decay (PRD v0.7.0 §7.4)
+PHASE_EROSION_ENGINE    = -2   # Soil erosion index (PRD v0.7.0 §7.5); runs after hydrology (-3)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +212,7 @@ def _get_impedance_at_depth(soil_column, depth_cm: float, impedance_fn) -> float
 def make_hydrology_hook(
     stress_increment_per_day: float = 0.05,
     lateral_flow: bool = False,
+    use_roughness: bool = False,
 ):
     """Return a built-in step function that runs the daily soil water balance.
 
@@ -258,6 +263,8 @@ def make_hydrology_hook(
         DEFAULT_SATURATION_PCT,
         DEFAULT_DRAINAGE_COEFFICIENT,
     )
+
+    _slope_cache: list = [None]  # ponytail: lazy one-time slope grid compute
 
     def _hydrology_step(
         state: "FieldState", env: "EnvironmentState"
@@ -315,6 +322,19 @@ def make_hydrology_hook(
                 # Effective precipitation = direct rain + lateral inflow from uphill
                 effective_precip_mm = rain_mm + lateral_inflow_grid[row_idx][col_idx]
 
+                # v0.7.0 -- slope/roughness direct runoff (only when clod_dynamics enabled)
+                # ponytail: bilinear coupling; ceiling: 1.0, floor: 0.0
+                direct_runoff_mm = 0.0
+                if use_roughness and cell_soils:
+                    if _slope_cache[0] is None:
+                        _slope_cache[0] = _compute_slope_normalized(state.elevation_grid)
+                    slope_frac = _slope_cache[0][row_idx][col_idx]
+                    if slope_frac > 0.0:
+                        roughness = cell_soils[0].surface_roughness_index
+                        frac = slope_frac * max(0.0, 1.0 - roughness)
+                        direct_runoff_mm = frac * effective_precip_mm
+                        effective_precip_mm = max(0.0, effective_precip_mm - direct_runoff_mm)
+
                 # Apply tipping-bucket (lateral inflow treated as additional precipitation)
                 updated_layers = calculate_tipping_bucket(
                     layer_dicts,
@@ -324,6 +344,13 @@ def make_hydrology_hook(
 
                 # Write drainage + surface runoff back to voxels
                 _dicts_to_voxels(updated_layers, cell_soils)
+
+                # Add slope/roughness direct runoff on top of saturation runoff
+                if direct_runoff_mm > 0.0:
+                    cell_soils[0].custom["surface_runoff_mm_today"] = (
+                        cell_soils[0].custom.get("surface_runoff_mm_today", 0.0)
+                        + direct_runoff_mm
+                    )
 
                 # Store lateral inflow received today for diagnostics / reporting
                 if lateral_flow:
@@ -558,6 +585,82 @@ def _dicts_to_voxels(dicts: list, voxels) -> None:
             voxel.custom["surface_runoff_mm_today"] = layer_dict["surface_runoff_mm_today"]
 
 
+
+# ---------------------------------------------------------------------------
+# Helper: per-cell slope (for clod dynamics runoff coupling)
+# ---------------------------------------------------------------------------
+
+def _compute_slope_normalized(elevation_grid) -> list:
+    """Return a 2-D list of per-cell normalized slope fractions (0.0 -- 1.0).
+
+    Each cell's value = (max elevation drop to any 4-neighbour) / (grid max drop).
+    Cells with no lower neighbour get 0.0. Used by the hydrology hook when
+    clod_dynamics=True to compute slope-driven direct runoff.
+    """
+    import numpy as np  # already a project dependency
+    elev = np.asarray(elevation_grid, dtype=float)
+    rows, cols = elev.shape
+    raw = [[0.0] * cols for _ in range(rows)]
+    for r in range(rows):
+        for c in range(cols):
+            nbrs = []
+            if r > 0:       nbrs.append(elev[r - 1, c])
+            if r < rows - 1: nbrs.append(elev[r + 1, c])
+            if c > 0:       nbrs.append(elev[r, c - 1])
+            if c < cols - 1: nbrs.append(elev[r, c + 1])
+            if nbrs:
+                raw[r][c] = max(0.0, float(elev[r, c]) - float(min(nbrs)))
+    max_drop = max(raw[r][c] for r in range(rows) for c in range(cols))
+    if max_drop > 0.0:
+        return [[raw[r][c] / max_drop for c in range(cols)] for r in range(rows)]
+    return raw  # flat field: all zeros
+
+
+# ---------------------------------------------------------------------------
+# Hook 5: Clod Dynamics  (phase=-4, PRD v0.7.0 §7.4)
+# ---------------------------------------------------------------------------
+
+def make_clod_dynamics_hook(
+    decay_factor: float = 0.05,
+    min_roughness: float = 0.1,
+):
+    """Return a step function that decays surface_roughness_index each day.
+
+    Simulates physical clod breakdown: rainfall progressively reduces the
+    surface micro-relief until a sealed-surface floor is reached.
+
+    Phase: PHASE_CLOD_ENGINE (-4) -- runs before hydrology (-3) so the
+    freshly-decayed roughness is used immediately in the tipping-bucket
+    runoff calculation.
+
+    Only the TOP layer (layer 0) of each soil column carries
+    ``surface_roughness_index``; this hook only touches that layer.
+
+    Closure captures
+    ----------------
+    decay_factor:
+        Fraction of (roughness - min_roughness) lost per 10 mm rainfall.
+    min_roughness:
+        Floor; roughness stays >= this even after heavy rains.
+    """
+    from cropforge.physics.soil import calculate_roughness_decay
+
+    def _clod_step(state: "FieldState", env: "EnvironmentState") -> "FieldState":
+        """Decay clod roughness -- phase=-4."""
+        rain = max(0.0, env.rainfall_mm)
+        for row_soils in state.soil:
+            for cell_soils in row_soils:
+                if cell_soils:
+                    v = cell_soils[0]
+                    v.surface_roughness_index = calculate_roughness_decay(
+                        v.surface_roughness_index, rain, decay_factor, min_roughness
+                    )
+        return state
+
+    _clod_step.__name__ = "_clod_step"
+    return _clod_step
+
+
 # ---------------------------------------------------------------------------
 # Hook 4: Lateral Flow + Nitrogen Transport  (phase=-4)
 # ---------------------------------------------------------------------------
@@ -730,56 +833,91 @@ def make_nutrients_hook(
 # Hook 5: Radiation Interception Engine  (PRD v0.5.0 §7)
 # ---------------------------------------------------------------------------
 
-def make_radiation_hook(k_extinction: float = 0.45):
+def make_radiation_hook(
+    k_extinction: float = 0.45,
+    slope_radiation_correction: bool = False,
+    latitude_deg: float = 0.0,
+):
     """Return a per-plant Beer-Lambert radiation interception hook.
 
     Runs at ``PHASE_RADIATION_ENGINE`` (-2), alongside ET0. For each living
     plant it calls ``calculate_intercepted_par()`` using:
-        - ``env.radiation_mj_m2`` as incoming solar radiation
+        - ``env.radiation_mj_m2`` as incoming solar radiation (possibly
+          corrected per-cell by terrain slope/aspect when
+          ``slope_radiation_correction=True``)
         - ``plant.lai``
         - The closure ``k_extinction`` parameter
 
     Writes the result to ``plant.custom['intercepted_par_mj']``.
+    When slope correction is active also writes per-cell corrected radiation
+    grid to ``env.custom['solar_rad_corrected_mj']`` (2-D list, rows×cols).
 
     Parameters
     ----------
     k_extinction:
         Beer-Lambert extinction coefficient. Default 0.45 (C3 wheat/rice).
-        Override to 0.50 for C4 crops (maize). Researchers can also set
-        this field-level if they register the hook manually.
-
-    Notes
-    -----
-    PRD §7.3 design note: radiation interception runs per-plant because LAI
-    varies by plant. It writes to plant.custom rather than a top-level
-    EnvironmentState field, keeping the core schema stable.
-
-    Backward compatibility:
-        When this hook is NOT registered (radiation=False), plant.custom
-        will have no 'intercepted_par_mj' key. Plugins that read it must
-        use: plant.custom.get('intercepted_par_mj', 0.0).
+    slope_radiation_correction:
+        When True, reads terrain slope/aspect grids and computes per-cell
+        solar radiation multipliers. Fields with no terrain use factor=1.0
+        (no behaviour change from v0.6.0).
+    latitude_deg:
+        Site latitude for solar position calculation. Only used when
+        ``slope_radiation_correction=True``.
     """
-    from cropforge.physics.radiation import calculate_intercepted_par
+    from cropforge.physics.radiation import (
+        calculate_intercepted_par,
+        calculate_solar_position,
+        calculate_slope_radiation_factor,
+    )
 
     def _radiation_step(
         state: "FieldState", env: "EnvironmentState"
     ) -> "FieldState":
         """Built-in radiation interception engine -- phase=-2."""
-        solar_rad = max(0.0, env.radiation_mj_m2)
+        solar_rad_base = max(0.0, env.radiation_mj_m2)
+
+        # --- Build per-cell radiation grid (slope correction or flat 1.0) ---
+        if slope_radiation_correction and getattr(state, "terrain", None) is not None:
+            terrain = state.terrain
+            # Solar noon (hour=12) — daily integral approximation
+            # ponytail: solar-noon factor as daily representative; sub-daily not needed at field scale
+            alt_deg, az_deg = calculate_solar_position(env.doy, 12.0, latitude_deg)
+            rows_n = terrain.slope_grid.shape[0]
+            cols_n = terrain.slope_grid.shape[1]
+            rad_grid = []
+            for r in range(rows_n):
+                row_rads = []
+                for c in range(cols_n):
+                    factor = calculate_slope_radiation_factor(
+                        slope_deg=float(terrain.slope_grid[r, c]),
+                        aspect_deg=float(terrain.aspect_grid[r, c]),
+                        solar_altitude_deg=alt_deg,
+                        solar_azimuth_deg=az_deg,
+                    )
+                    row_rads.append(solar_rad_base * factor)
+                rad_grid.append(row_rads)
+            env.custom["solar_rad_corrected_mj"] = rad_grid
+        else:
+            rad_grid = None  # use scalar for all plants
+
         for plant in state.plants:
             if not plant.alive:
                 plant.custom["intercepted_par_mj"] = 0.0
                 continue
+            if rad_grid is not None:
+                cell_rad = rad_grid[plant.row][plant.col]
+            else:
+                cell_rad = solar_rad_base
             par = calculate_intercepted_par(
-                solar_rad_mj=solar_rad,
+                solar_rad_mj=cell_rad,
                 lai=plant.lai,
                 k_extinction=k_extinction,
             )
             plant.custom["intercepted_par_mj"] = par
 
         logger.debug(
-            "Radiation hook: day=%d solar_rad=%.2f MJ/m2 k=%.3f (%d plants updated).",
-            env.day, solar_rad, k_extinction, len(state.plants),
+            "Radiation hook: day=%d solar_rad=%.2f MJ/m2 k=%.3f correction=%s (%d plants).",
+            env.day, solar_rad_base, k_extinction, slope_radiation_correction, len(state.plants),
         )
         return state
 
@@ -788,8 +926,73 @@ def make_radiation_hook(k_extinction: float = 0.45):
 
 
 # ---------------------------------------------------------------------------
-# Hook 6: Spatial Disease / Pest Pressure Engine  (PRD v0.5.0 §8)
+# Hook 7: Topographical Wind Field Engine  (PRD v0.7.0 §6)
 # ---------------------------------------------------------------------------
+
+def make_wind_hook(
+    wind_direction_deg: float = 270.0,
+    fetch_cells: int = 3,
+    sensitivity: float = 0.3,
+):
+    """Return a hook that computes a per-cell wind speed grid from terrain.
+
+    Runs at ``PHASE_WIND_ENGINE`` (-2). Reads terrain slope from
+    ``state.terrain``. If terrain is absent, writes a flat 1.0 grid so
+    downstream consumers (disease engine, ET0) always find the key.
+
+    Writes ``env.custom['wind_speed_ms_grid']`` -- a 2-D list (rows × cols)
+    of corrected wind speeds in m/s.
+
+    Parameters
+    ----------
+    wind_direction_deg:
+        Meteorological bearing the wind blows FROM. Default 270 (from West).
+    fetch_cells:
+        Upwind sampling depth. Default 3 cells.
+    sensitivity:
+        Multiplier sensitivity to shelter index. Default 0.3.
+
+    Backward compatibility:
+        Only registered when ``use_physics(terrain_wind=True)``. Scripts
+        without it never see 'wind_speed_ms_grid' in env.custom.
+    """
+    from cropforge.physics.wind import calculate_wind_multiplier
+
+    def _wind_step(
+        state: "FieldState", env: "EnvironmentState"
+    ) -> "FieldState":
+        """Built-in topographical wind field engine -- phase=-2."""
+        import numpy as np
+        base_wind = max(0.0, env.wind_speed_ms)
+        terrain = getattr(state, "terrain", None)
+
+        if terrain is not None:
+            mult = calculate_wind_multiplier(
+                terrain.elevation_grid,
+                wind_direction_deg=wind_direction_deg,
+                fetch_cells=fetch_cells,
+                sensitivity=sensitivity,
+            )
+        else:
+            # No terrain → flat 1.0 grid; disease engine still gets the key
+            rows = len(state.soil)
+            cols = len(state.soil[0]) if rows > 0 else 0
+            mult = np.ones((rows, cols), dtype=float)
+
+        # Write 2-D list of corrected wind speeds
+        env.custom["wind_speed_ms_grid"] = (
+            (mult * base_wind).tolist()
+        )
+        env.custom["wind_multiplier_grid"] = mult.tolist()
+
+        logger.debug(
+            "Wind hook: day=%d base_wind=%.2f m/s direction=%.0f° terrain=%s.",
+            env.day, base_wind, wind_direction_deg, terrain is not None,
+        )
+        return state
+
+    _wind_step.__name__ = "_wind_step"
+    return _wind_step
 
 def make_disease_hook(
     initial_foci: list[tuple[int, int]] | None = None,
@@ -866,9 +1069,21 @@ def make_disease_hook(
                 "Disease hook: initial foci seeded at %s.", foci
             )
 
+        # Use spatially corrected wind speed if terrain_wind is active,
+        # falling back to the scalar for full backward compatibility.
+        wind_grid = env.custom.get("wind_speed_ms_grid")
+        if wind_grid is not None:
+            # Representative field-mean wind for the scalar spread probability.
+            # ponytail: mean scalar; per-cell spread needs redesign of calculate_disease_spread.
+            total = sum(v for row in wind_grid for v in row)
+            n = sum(len(row) for row in wind_grid)
+            effective_wind = total / n if n else env.wind_speed_ms
+        else:
+            effective_wind = env.wind_speed_ms
+
         calculate_disease_spread(
             plant_grid=plant_grid,
-            wind_speed_ms=env.wind_speed_ms,
+            wind_speed_ms=effective_wind,
             wind_direction_deg=wind_direction_deg,
             base_infection_rate=spread_rate,
             latency_days=latency_days,
@@ -885,3 +1100,129 @@ def make_disease_hook(
 
     _disease_step.__name__ = "_disease_step"
     return _disease_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 8: Root Effective Depth Clamp  (PRD v0.7.0 §7.3)
+# ---------------------------------------------------------------------------
+
+def make_root_clamp_hook():
+    """Return a hook that clamps plant root depth to the effective soil depth.
+
+    Runs at ``PHASE_ROOT_CLAMP`` (+1), i.e. after all plugin step functions
+    (phase 0) have grown the roots for the day.
+
+    Reads ``state.custom['effective_soil_depth_cm_grid']`` — a 2-D list of
+    per-cell caps in centimetres — computed by ``Field._initialize_field``
+    from base soil profile depth + land-preparation elevation delta.
+
+    If the grid is absent (e.g. old serialised states), the hook is a no-op
+    and backward compatibility is fully preserved.
+
+    Backward compatibility:
+        Only registered when ``use_physics(root_clamping=True)``.  Without
+        it, plant.root_depth_cm is unconstrained by this engine.
+    """
+    def _root_clamp_step(
+        state: "FieldState", env: "EnvironmentState"
+    ) -> "FieldState":
+        """Built-in root depth clamp engine -- phase=+1."""
+        grid = state.custom.get("effective_soil_depth_cm_grid")
+        if grid is None:
+            return state  # no-op; grid absent
+        n_clamped = 0
+        for plant in state.plants:
+            if not plant.alive:
+                continue
+            cap = grid[plant.row][plant.col]
+            if plant.root_depth_cm > cap:
+                plant.root_depth_cm = cap
+                n_clamped += 1
+        if n_clamped:
+            logger.debug(
+                "Root clamp hook: day=%d clamped %d plants to effective soil depth.",
+                env.day, n_clamped,
+            )
+        return state
+
+    _root_clamp_step.__name__ = "_root_clamp_step"
+    return _root_clamp_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 8: Soil Erosion Engine  (phase=-2, PRD v0.7.0 §7.5)
+# ---------------------------------------------------------------------------
+
+def make_erosion_hook() -> object:
+    """Return a step function that computes daily soil erosion index per cell.
+
+    Implements a simplified RUSLE model:
+
+        erosion_index = runoff_mm × slope_frac × (1 - roughness) × (1 - veg_cover)
+
+    Phase: ``PHASE_EROSION_ENGINE`` (-2) -- runs after the hydrology hook (-3)
+    so ``surface_runoff_mm_today`` is already populated.  When ``water_balance``
+    is not enabled, falls back to ``env.rainfall_mm`` as the runoff proxy.
+
+    Accumulates daily values into
+    ``state.custom['cumulative_erosion_index_grid']`` (2-D list, rows × cols).
+    Per-day values are also written to
+    ``state.custom['daily_erosion_index_grid']`` for diagnostics.
+
+    Vegetation cover per cell is derived from the maximum LAI among all
+    plants at that (row, col): ``cover = min(1.0, max_lai / 3.0)``.
+    Cells with no plants use cover = 0.0 (bare ground).
+    """
+    from cropforge.physics.soil import calculate_erosion_index
+
+    _slope_cache: list = [None]  # ponytail: lazy one-time compute
+
+    def _erosion_step(state: "FieldState", env: "EnvironmentState") -> "FieldState":
+        """Compute + accumulate daily erosion index -- phase=-2."""
+        if _slope_cache[0] is None:
+            _slope_cache[0] = _compute_slope_normalized(state.elevation_grid)
+        slopes = _slope_cache[0]
+
+        rows = len(state.soil)
+        if not rows:
+            return state
+        cols = len(state.soil[0])
+
+        # Build per-cell vegetation cover from LAI (Beer-Lambert proxy)
+        # ponytail: max_lai / 3.0; ceiling 1.0
+        cell_lai: dict = {}
+        for plant in state.plants:
+            if plant.alive:
+                key = (plant.row, plant.col)
+                cell_lai[key] = max(cell_lai.get(key, 0.0), plant.lai)
+
+        # Initialise accumulator grids if first day
+        cum_key = "cumulative_erosion_index_grid"
+        day_key = "daily_erosion_index_grid"
+        if cum_key not in state.custom:
+            state.custom[cum_key] = [[0.0] * cols for _ in range(rows)]
+
+        daily_grid = [[0.0] * cols for _ in range(rows)]
+
+        for r in range(rows):
+            for c in range(cols):
+                cell_soils = state.soil[r][c]
+                if not cell_soils:
+                    continue
+                vox = cell_soils[0]  # top layer only
+                runoff = vox.custom.get("surface_runoff_mm_today", env.rainfall_mm)
+                slope_frac = slopes[r][c]
+                roughness = vox.surface_roughness_index
+                veg_cover = min(1.0, cell_lai.get((r, c), 0.0) / 3.0)
+
+                idx = calculate_erosion_index(
+                    runoff, slope_frac, roughness, veg_cover
+                )
+                daily_grid[r][c] = idx
+                state.custom[cum_key][r][c] += idx
+
+        state.custom[day_key] = daily_grid
+        return state
+
+    _erosion_step.__name__ = "_erosion_step"
+    return _erosion_step

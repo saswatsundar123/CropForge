@@ -40,6 +40,116 @@ import math
 _PAR_FRACTION = 0.5   # 50 % of total solar radiation is PAR
 
 
+# ---------------------------------------------------------------------------
+# Solar geometry helpers  (PRD v0.7.0 §5.3)
+# ---------------------------------------------------------------------------
+
+def calculate_solar_position(
+    doy: int,
+    hour: float,
+    latitude_deg: float,
+) -> tuple[float, float]:
+    """Solar altitude and azimuth from day-of-year, hour, and latitude.
+
+    Parameters
+    ----------
+    doy:          Day of year (1–365).
+    hour:         Solar hour (0–24). Use 12.0 for solar noon.
+    latitude_deg: Site latitude in decimal degrees (positive = N).
+
+    Returns
+    -------
+    (altitude_deg, azimuth_deg)
+        altitude_deg: Solar elevation above horizon (0–90°). Negative = below horizon.
+        azimuth_deg:  Solar azimuth clockwise from North (0–360°).
+    """
+    lat = math.radians(latitude_deg)
+    # Solar declination (Spencer 1971 approx)
+    b = 2 * math.pi * (doy - 1) / 365.0
+    decl = math.radians(
+        0.006918
+        - 0.399912 * math.cos(b) + 0.070257 * math.sin(b)
+        - 0.006758 * math.cos(2 * b) + 0.000907 * math.sin(2 * b)
+        - 0.002697 * math.cos(3 * b) + 0.00148 * math.sin(3 * b)
+    ) * (180 / math.pi)  # degrees
+    decl_rad = math.radians(decl)
+
+    # Hour angle (15° per hour, solar noon = 0)
+    ha = math.radians((hour - 12.0) * 15.0)
+
+    # Altitude
+    sin_alt = (
+        math.sin(lat) * math.sin(decl_rad)
+        + math.cos(lat) * math.cos(decl_rad) * math.cos(ha)
+    )
+    sin_alt = max(-1.0, min(1.0, sin_alt))
+    altitude_rad = math.asin(sin_alt)
+    altitude_deg = math.degrees(altitude_rad)
+
+    # Azimuth (clockwise from North)
+    if math.cos(altitude_rad) < 1e-10:
+        # Sun directly overhead → azimuth undefined; use 180 (south for N hemisphere)
+        azimuth_deg = 180.0
+    else:
+        cos_az = (
+            math.sin(decl_rad) - math.sin(lat) * sin_alt
+        ) / (math.cos(lat) * math.cos(altitude_rad))
+        cos_az = max(-1.0, min(1.0, cos_az))
+        az = math.degrees(math.acos(cos_az))
+        # Afternoon: azimuth > 180
+        azimuth_deg = az if ha <= 0 else 360.0 - az
+
+    return altitude_deg, azimuth_deg
+
+
+def calculate_slope_radiation_factor(
+    slope_deg: float,
+    aspect_deg: float,
+    solar_altitude_deg: float,
+    solar_azimuth_deg: float,
+) -> float:
+    """Cosine correction factor for radiation on a sloped cell.
+
+    Returns the ratio of radiation incident on the slope vs. a flat surface.
+    Flat cell = 1.0. Sun-facing slope > 1.0. Shaded slope → clamped to 0.0.
+
+    Parameters
+    ----------
+    slope_deg:         Cell slope in degrees (0 = flat).
+    aspect_deg:        Cell aspect clockwise from North (0 = north-facing).
+    solar_altitude_deg: Sun elevation above horizon.
+    solar_azimuth_deg:  Sun azimuth clockwise from North.
+
+    Returns
+    -------
+    float in [0.0, ~1.5]  (can exceed 1.0 for steep sun-facing slopes)
+    """
+    if solar_altitude_deg <= 0.0:
+        return 0.0  # sun below horizon
+
+    slope_r = math.radians(slope_deg)
+    # terrain.py aspect = steepest-ascent direction (uphill).
+    # The irradiance formula needs the downhill (sun-facing) direction = +180°.
+    # ponytail: single +180 mod 360 here; no changes needed in terrain.py or callers.
+    facing_deg = (aspect_deg + 180.0) % 360.0
+    aspect_r = math.radians(facing_deg)
+    alt_r = math.radians(solar_altitude_deg)
+    az_r = math.radians(solar_azimuth_deg)
+
+    # cos(incidence) on sloped surface (standard GIS formula)
+    cos_i = (
+        math.sin(alt_r) * math.cos(slope_r)
+        + math.cos(alt_r) * math.sin(slope_r) * math.cos(az_r - aspect_r)
+    )
+    # cos(incidence) on flat surface = sin(altitude)
+    cos_flat = math.sin(alt_r)
+
+    if cos_flat < 1e-10:
+        return 0.0
+
+    return max(0.0, cos_i / cos_flat)
+
+
 def calculate_intercepted_par(
     solar_rad_mj: float,
     lai: float,

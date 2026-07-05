@@ -550,6 +550,20 @@ class Field:
         # Stamp land prep soil property deltas onto every voxel (PRD v0.6.0 §6.5)
         if _soil_deltas:
             self._apply_land_prep_deltas(self._field_state, _soil_deltas)
+
+        # v0.7.0 -- Effective soil depth per cell for root clamping (PRD v0.7.0 §7.3)
+        # delta = (post-land-prep elevation) - (base elevation), in metres.
+        # Flat field / no land prep → delta == 0 → effective depth == profile depth.
+        _elev_delta = effective_elevation - self.elevation_grid  # metres (rows, cols)
+        self._field_state.custom["effective_soil_depth_cm_grid"] = [
+            [
+                max(0.0, self._field_state.soil[r][c][-1].depth_bottom_cm
+                    + _elev_delta[r, c] * 100.0)
+                for c in range(self.cols)
+            ]
+            for r in range(self.rows)
+        ]
+
         return self._field_state
 
     def _apply_land_prep_deltas(self, state: "FieldState", deltas: dict) -> None:
@@ -827,6 +841,17 @@ class Farm:
         anemometer_height_m: float = 2.0,
         # Radiation engine parameters
         k_extinction: float = 0.45,
+        slope_radiation_correction: bool = False,
+        # Wind field parameters
+        terrain_wind: bool = False,
+        wind_direction_deg: float = 270.0,
+        # Root constraint parameters
+        root_clamping: bool = False,
+        # Clod dynamics parameters
+        clod_dynamics: bool = False,
+        clod_decay_factor: float = 0.05,
+        # Erosion engine parameters
+        erosion: bool = False,
         # Disease engine parameters
         disease_foci: list | None = None,
         disease_spread_rate: float = 0.15,
@@ -913,16 +938,24 @@ class Farm:
         from cropforge.physics.builtin_hooks import (
             PHASE_ET0_ENGINE,
             PHASE_ROOT_ENGINE,
+            PHASE_ROOT_CLAMP,
             PHASE_HYDROLOGY_ENGINE,
             PHASE_NUTRIENTS_ENGINE,
             PHASE_RADIATION_ENGINE,
+            PHASE_WIND_ENGINE,
             PHASE_DISEASE_ENGINE,
+            PHASE_CLOD_ENGINE,
+            PHASE_EROSION_ENGINE,
             make_et0_hook,
             make_root_impedance_hook,
             make_hydrology_hook,
             make_nutrients_hook,
             make_radiation_hook,
+            make_wind_hook,
             make_disease_hook,
+            make_root_clamp_hook,
+            make_clod_dynamics_hook,
+            make_erosion_hook,
         )
         from cropforge.runtime import CropForgeConfigError
 
@@ -940,6 +973,11 @@ class Farm:
                 "drainage_mm_today which is written by the water balance hook. "
                 "Enable: farm.use_physics(et0=True, water_balance=True, nutrients=True)."
             )
+        if clod_dynamics and not water_balance:
+            raise CropForgeConfigError(
+                "use_physics(clod_dynamics=True) requires water_balance=True. "
+                "Enable: farm.use_physics(et0=True, water_balance=True, clod_dynamics=True)."
+            )
 
         # Record configuration for introspection
         self._physics_config.update({
@@ -949,6 +987,12 @@ class Farm:
             "nutrients": nutrients,
             "lateral_flow": lateral_flow,
             "radiation": radiation,
+            "slope_radiation_correction": slope_radiation_correction,
+            "terrain_wind": terrain_wind,
+            "wind_direction_deg": wind_direction_deg,
+            "root_clamping": root_clamping,
+            "clod_dynamics": clod_dynamics,
+            "erosion": erosion,
             "disease": disease,
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
@@ -963,7 +1007,7 @@ class Farm:
             )
 
         if water_balance:
-            hook = make_hydrology_hook(lateral_flow=lateral_flow)
+            hook = make_hydrology_hook(lateral_flow=lateral_flow, use_roughness=clod_dynamics)
             self._physics_registry.append((PHASE_HYDROLOGY_ENGINE, hook))
             logger.info(
                 "Farm %r: Soil water balance engine enabled (phase=%d).",
@@ -992,11 +1036,25 @@ class Farm:
             )
 
         if radiation:
-            hook = make_radiation_hook(k_extinction=k_extinction)
+            hook = make_radiation_hook(
+                k_extinction=k_extinction,
+                slope_radiation_correction=slope_radiation_correction,
+                latitude_deg=self.location[0] if slope_radiation_correction else 0.0,
+            )
             self._physics_registry.append((PHASE_RADIATION_ENGINE, hook))
             logger.info(
                 "Farm %r: Radiation interception engine enabled (k=%.3f).",
                 self.name, k_extinction,
+            )
+
+        if terrain_wind:
+            hook = make_wind_hook(
+                wind_direction_deg=wind_direction_deg,
+            )
+            self._physics_registry.append((PHASE_WIND_ENGINE, hook))
+            logger.info(
+                "Farm %r: Topographical wind field enabled (direction=%.0f°).",
+                self.name, wind_direction_deg,
             )
 
         if disease:
@@ -1017,8 +1075,33 @@ class Farm:
                 disease_wind_direction_deg, disease_latency_days,
             )
 
+        if root_clamping:
+            hook = make_root_clamp_hook()
+            self._physics_registry.append((PHASE_ROOT_CLAMP, hook))
+            logger.info(
+                "Farm %r: Root effective-depth clamp enabled (phase=%d).",
+                self.name, PHASE_ROOT_CLAMP,
+            )
+
+        if clod_dynamics:
+            hook = make_clod_dynamics_hook(decay_factor=clod_decay_factor)
+            self._physics_registry.append((PHASE_CLOD_ENGINE, hook))
+            logger.info(
+                "Farm %r: Clod dynamics engine enabled (decay_factor=%.3f, phase=%d).",
+                self.name, clod_decay_factor, PHASE_CLOD_ENGINE,
+            )
+
+        if erosion:
+            hook = make_erosion_hook()
+            self._physics_registry.append((PHASE_EROSION_ENGINE, hook))
+            logger.info(
+                "Farm %r: Soil erosion engine enabled (phase=%d).",
+                self.name, PHASE_EROSION_ENGINE,
+            )
+
         if not any([et0, root_impedance, water_balance,
-                    nutrients, lateral_flow, radiation, disease]):
+                     nutrients, lateral_flow, radiation,
+                     disease, terrain_wind, root_clamping, clod_dynamics, erosion]):
             logger.debug(
                 "Farm %r: use_physics() called with all engines disabled -- no-op.",
                 self.name,

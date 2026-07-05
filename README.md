@@ -15,6 +15,18 @@ pip install cropforge
 
 ---
 
+## What's New in v0.7.0
+
+### Topographical Physics
+- **Solar Incidence Engine:** Modifies radiation absorption dynamically based on slope, aspect, and solar declination calculations.
+- **Wind Shadow Engine:** Models localized wind fields based on prevailing direction, offering leeward shelter and ridgeline intensification.
+- **Clod Dynamics:** Exponential decay of soil surface roughness during heavy rainfall events.
+- **Topographical Erosion Engine:** Incorporates a grid-based RUSLE model evaluating slope gradient, daily surface runoff, vegetation cover, and roughness dampening.
+- **3D Observable Updates:** "Cumulative Erosion Index" and "Surface Runoff" can now be mapped directly onto the WebGL terrain viewport via the Parquet data layer.
+- **Root Clamping:** Strict clamp downward root growth into `effective_soil_depth_m`, simulating the physical boundaries of carved terraces or deep furrows.
+
+---
+
 ## What's New in v0.6.0
 
 ### 3D Topography and Land Preparation
