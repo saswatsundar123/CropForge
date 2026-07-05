@@ -85,6 +85,9 @@ SOIL_SCHEMA = pa.schema([
     pa.field("nitrogen_kg_ha",          pa.float32()),
     pa.field("bulk_density",            pa.float32()),
     pa.field("penetration_resistance",  pa.float32()),
+    # v0.7.0 — Phase 5 & 6 observables (0.0 when erosion engine is disabled)
+    pa.field("surface_runoff_mm_today", pa.float32()),
+    pa.field("cumulative_erosion_index", pa.float32()),
     pa.field("custom_json",             pa.string()),
 ])
 
@@ -194,9 +197,17 @@ class StateLogger:
             })
 
         # ---- Soil rows (one per voxel = per row × col × layer) --------
+        # v0.7.0: read cumulative erosion grid once per day/field (not per voxel)
+        _cum_grid = state.custom.get("cumulative_erosion_index_grid")
         for row_list in state.soil:
             for col_list in row_list:
                 for voxel in col_list:
+                    cum_ei = 0.0
+                    if _cum_grid is not None:
+                        try:
+                            cum_ei = float(_cum_grid[voxel.row][voxel.col])
+                        except (IndexError, TypeError):
+                            pass
                     self._soil_rows.append({
                         "day":                    day,
                         "field_name":             field_name,
@@ -209,6 +220,10 @@ class StateLogger:
                         "nitrogen_kg_ha":         voxel.nitrogen_kg_ha,
                         "bulk_density":           voxel.bulk_density,
                         "penetration_resistance": voxel.penetration_resistance,
+                        "surface_runoff_mm_today": float(
+                            voxel.custom.get("surface_runoff_mm_today", 0.0)
+                        ),
+                        "cumulative_erosion_index": cum_ei,
                         "custom_json":            json.dumps(voxel.custom),
                     })
 

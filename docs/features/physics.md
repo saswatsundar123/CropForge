@@ -1,6 +1,8 @@
 # Opt-In Physics
 
-CropForge v0.2.0 introduced **Opt-In Physics** — pre-built, mathematically verified solvers that plug into the simulation's negative phase execution slots. v0.5.0 extends this with two new advanced engines: **Beer-Lambert Radiation Interception** and **Wind-driven Spatial Disease Spread**.
+CropForge v0.2.0 introduced **Opt-In Physics** — pre-built, mathematically verified solvers that plug into the simulation's negative phase execution slots. 
+v0.5.0 extended this with **Beer-Lambert Radiation Interception** and **Wind-driven Spatial Disease Spread**.
+v0.7.0 introduces a massive update with **Topographical Physics**, natively coupling 3D terrain geometry with environment and soil mechanics (Solar Incidence, Wind Shadow, Clod Dynamics, and RUSLE-based Erosion).
 
 ## The Philosophy
 
@@ -19,12 +21,20 @@ farm.use_physics(
     et0=True,               # FAO-56 Penman-Monteith ET0
     root_impedance=True,    # Soil penetration resistance
     water_balance=True,     # Soil water balance (requires et0=True)
+    lateral_flow=True,      # D8 runoff routing
     radiation=True,         # Beer-Lambert light interception (v0.5.0)
     disease=True,           # Wind-anisotropic SIR disease spread (v0.5.0)
     # --- disease configuration ---
     disease_foci=[(15, 15)],
     disease_wind_direction_deg=270.0,
     disease_spread_rate=0.20,
+    
+    # --- Topographical Physics (v0.7.0) ---
+    slope_radiation_correction=True, # Solar incidence adjusted by slope/aspect
+    terrain_wind=True,               # Topographical wind field
+    root_clamping=True,              # Topographical root constraints
+    clod_dynamics=True,              # Rain melts the clods over time
+    erosion=True,                    # RUSLE-based erosion index
 )
 ```
 
@@ -201,3 +211,24 @@ farm.use_physics(
 ```
 
 See [`examples/disease_outbreak_trial.py`](https://github.com/saswatsundar123/cropforge/blob/main/examples/disease_outbreak_trial.py) for a complete working script and the [Disease Modeling Tutorial](../tutorials/disease_modeling.md) for a step-by-step walkthrough.
+
+---
+
+## Topographical Physics (`v0.7.0`)
+
+With v0.7.0, CropForge bridges the gap between flat-field simulations and true 3D spatial modelling. If a field has a `Terrain` object and land preparation applied, the engine uses the resulting elevation grid to modify physics behaviour.
+
+### Solar Incidence (`slope_radiation_correction=True`)
+Adjusts `env.radiation_mj_m2` at a per-cell level based on the slope, aspect, and the sun's declination for that day of the year. South-facing slopes in the Northern Hemisphere receive a radiation multiplier > 1.0, while North-facing slopes are shadowed.
+
+### Topographical Wind Shadow (`terrain_wind=True`)
+Adjusts `env.wind_speed_ms` spatially based on `wind_direction_deg`. Windward slopes receive a multiplier > 1.0, ridge tops experience the highest multiplier, and leeward slopes are sheltered. This heavily influences spatial disease spread and ET0.
+
+### Clod Dynamics & Infiltration (`clod_dynamics=True`)
+Simulates the physical "melting" of soil clods. `LandPrep` (like `ConventionalTill`) sets an initial `surface_roughness_index`. Heavy rain exponentially decays this roughness over time. High roughness traps water, increasing infiltration and reducing runoff velocity.
+
+### RUSLE-based Erosion (`erosion=True`)
+Computes a daily erosion index based on a simplified Revised Universal Soil Loss Equation (RUSLE). Erosion scales multiplicatively with `surface_runoff_mm_today` and slope fraction, but is heavily dampened by `surface_roughness` and vegetation cover. The cumulative erosion index is logged and can be viewed dynamically in the 3D Terrain Modal.
+
+### Effective Soil Depth (`root_clamping=True`)
+When LandPrep (like Furrows or Bunds) cuts into or piles up soil, it modifies the `effective_soil_depth_m` of that cell. This engine strictly limits root depth to the new effective depth, simulating the physical boundaries of carved terrain.

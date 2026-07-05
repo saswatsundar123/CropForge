@@ -331,11 +331,14 @@ def create_dash_app(log_path: str):
 
     # v0.6.0 — Terrain surface overlay: soil/env variables draped over elevation
     terrain_overlay_options = [
-        {"label": "Elevation only",        "value": "__elevation__"},
-        {"label": "Soil Moisture (%)",     "value": "moisture_pct"},
-        {"label": "Nitrogen (kg/ha)",      "value": "nitrogen_kg_ha"},
-        {"label": "Biomass (g/plant)",     "value": "biomass_g"},
-        {"label": "Stress Index",          "value": "stress_index"},
+        {"label": "Elevation only",              "value": "__elevation__"},
+        {"label": "Soil Moisture (%)",           "value": "moisture_pct"},
+        {"label": "Nitrogen (kg/ha)",            "value": "nitrogen_kg_ha"},
+        {"label": "Biomass (g/plant)",           "value": "biomass_g"},
+        {"label": "Stress Index",                "value": "stress_index"},
+        # v0.7.0 Phase 6 observables
+        {"label": "Surface Runoff (mm)",         "value": "surface_runoff_mm_today"},
+        {"label": "Cumulative Erosion Index",    "value": "cumulative_erosion_index"},
     ]
 
     # ---- Day range for scrubber ----------------------------------------
@@ -1029,6 +1032,9 @@ def create_dash_app(log_path: str):
                                 {"label": "LAI (m²/m²)", "value": "lai"},
                                 {"label": "Height (cm)",          "value": "height_cm"},
                                 {"label": "Stress Index",         "value": "stress_index"},
+                                # v0.7.0 Phase 6 observables (reads from soil layer 0)
+                                {"label": "Surface Runoff (mm)",        "value": "surface_runoff_mm_today"},
+                                {"label": "Cumulative Erosion Index",   "value": "cumulative_erosion_index"},
                             ],
                             value="biomass_g",
                             clearable=False,
@@ -1490,13 +1496,24 @@ def create_dash_app(log_path: str):
                               [0.55, "#c8a45a"], [0.80, "#8b5e3c"], [1.0, "#f5f5f5"]]
         else:
             label_map = {
-                "moisture_pct":   "Soil Moisture (%)",
-                "nitrogen_kg_ha": "Nitrogen (kg/ha)",
-                "biomass_g":      "Biomass (g/plant)",
-                "stress_index":   "Stress Index",
+                "moisture_pct":             "Soil Moisture (%)",
+                "nitrogen_kg_ha":           "Nitrogen (kg/ha)",
+                "biomass_g":                "Biomass (g/plant)",
+                "stress_index":             "Stress Index",
+                # v0.7.0
+                "surface_runoff_mm_today":  "Surface Runoff (mm)",
+                "cumulative_erosion_index": "Cumulative Erosion Index",
+            }
+            colorscale_map_overlay = {
+                "moisture_pct":             "RdYlGn",
+                "nitrogen_kg_ha":           "RdYlGn",
+                "biomass_g":                "RdYlGn",
+                "stress_index":             "RdYlGn_r",
+                "surface_runoff_mm_today":  "Blues",
+                "cumulative_erosion_index": "Reds",
             }
             color_label = label_map.get(overlay_var, overlay_var)
-            colorscale  = "RdYlGn"
+            colorscale  = colorscale_map_overlay.get(overlay_var, "RdYlGn")
             surface_color = elev_grid  # fallback
 
             # Try plants table
@@ -1607,6 +1624,18 @@ def create_dash_app(log_path: str):
         if day_data.empty:
             return _empty_figure(f"No data for day {day}")
 
+        # For soil-sourced variables (runoff, erosion), fall back to soil_df
+        # ponytail: simple column-existence check; same fallback pattern as _build_terrain_surface
+        _soil_vars = {"surface_runoff_mm_today", "cumulative_erosion_index"}
+        if variable in _soil_vars and soil_df is not None and not soil_df.empty:
+            day_data = soil_df[
+                (soil_df["day"] == int(day)) &
+                (soil_df["field_name"] == (selected_field or "")) &
+                (soil_df["layer"] == 0)
+            ]
+            if day_data.empty:
+                return _empty_figure(f"No soil data for day {day} (enable erosion=True)")
+
         try:
             pivot = day_data.pivot_table(
                 index="row", columns="col", values=variable, aggfunc="mean"
@@ -1615,16 +1644,20 @@ def create_dash_app(log_path: str):
             return _empty_figure(f"Cannot build heatmap for '{variable}'")
 
         label_map = {
-            "biomass_g": "Biomass (g/plant)",
-            "lai":       "LAI (m\u00b2/m\u00b2)",
-            "height_cm": "Height (cm)",
-            "stress_index": "Stress Index",
+            "biomass_g":                 "Biomass (g/plant)",
+            "lai":                       "LAI (m\u00b2/m\u00b2)",
+            "height_cm":                 "Height (cm)",
+            "stress_index":              "Stress Index",
+            "surface_runoff_mm_today":   "Surface Runoff (mm)",
+            "cumulative_erosion_index":  "Cumulative Erosion Index",
         }
         colorscale_map = {
-            "biomass_g":   "Viridis",
-            "lai":         "YlGn",
-            "height_cm":   "Blues",
-            "stress_index":"RdYlGn_r",
+            "biomass_g":                 "Viridis",
+            "lai":                       "YlGn",
+            "height_cm":                 "Blues",
+            "stress_index":              "RdYlGn_r",
+            "surface_runoff_mm_today":   "Blues",
+            "cumulative_erosion_index":  "Reds",
         }
         fig = go.Figure(go.Heatmap(
             z=pivot.values,

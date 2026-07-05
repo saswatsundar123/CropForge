@@ -8,6 +8,23 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-05
+
+### Added
+- **Topographical Physics:** Advanced opt-in physics modules that leverage the 3D terrain system.
+- **Solar Incidence Engine:** Modifies radiation absorption dynamically based on slope, aspect, and solar declination calculations.
+- **Wind Shadow Engine:** Models localized wind fields based on prevailing direction, offering leeward shelter and ridgeline intensification.
+- **Clod Dynamics:** Exponential decay of soil surface roughness during heavy rainfall events.
+- **Topographical Erosion Engine:** Incorporates a grid-based RUSLE model evaluating slope gradient, daily surface runoff, vegetation cover, and roughness dampening.
+- **3D Observable Updates:** "Cumulative Erosion Index" and "Surface Runoff" can now be mapped directly onto the WebGL terrain viewport via the Parquet data layer.
+
+### Fixed
+- **Root Clamping:** Implemented strict hook mapping to clamp downward root growth into `effective_soil_depth_m` preventing penetration beyond the bedrock boundaries of carved terraces or deep furrows.
+
+### Tested
+- Extensively audited backwards-compatibility across flat-field runs and legacy datasets.
+- Test suite expanded to 742 passing tests with full coverage for Erosion and Clod mechanics.
+
 ## [0.6.0] - 2026-07-04
 
 ### Added
