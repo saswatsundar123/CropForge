@@ -5,13 +5,13 @@ Open-source, code-first simulation engine. Researchers write the model;
 CropForge faithfully executes it and visualises the result.
 
 Public API (PRD Section 6.1):
-    from cropforge import Farm, Field, Crop, Event
+    from cropforge import Farm, Field, Crop, Event, Terrain, LandPrep
 
 Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, Event, ...`
 from cropforge.crop import Crop
@@ -35,6 +35,8 @@ from cropforge.land_prep import (
     Terrace,
     ZeroTillage,
     ConventionalTill,
+    TiedRidges,
+    VegetativeFilterStrip,
 )
 
 __all__ = [
@@ -62,5 +64,7 @@ __all__ = [
     "Terrace",
     "ZeroTillage",
     "ConventionalTill",
+    "TiedRidges",
+    "VegetativeFilterStrip",
     "__version__",
 ]

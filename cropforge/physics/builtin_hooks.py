@@ -54,6 +54,7 @@ PHASE_DISEASE_ENGINE    = -1   # Spatial SIR disease spread (same phase as root;
 PHASE_ROOT_CLAMP        = +1   # Root depth clamping (PRD v0.7.0 §7.3) — runs AFTER all plugins
 PHASE_CLOD_ENGINE       = -4   # Clod dynamics / roughness decay (PRD v0.7.0 §7.4)
 PHASE_EROSION_ENGINE    = -2   # Soil erosion index (PRD v0.7.0 §7.5); runs after hydrology (-3)
+PHASE_SEDIMENT_ENGINE   = +2   # Sediment transport (PRD v0.8.0 §5.2); day-end, reads erosion grid
 
 
 # ---------------------------------------------------------------------------
@@ -1179,9 +1180,13 @@ def make_erosion_hook() -> object:
 
     def _erosion_step(state: "FieldState", env: "EnvironmentState") -> "FieldState":
         """Compute + accumulate daily erosion index -- phase=-2."""
-        if _slope_cache[0] is None:
+        # Prefer slope grid written by sediment hook (geomorphological feedback, PRD v0.8.0 §6.1).
+        # Falls back to closure cache (first day, or sediment transport disabled).
+        slopes = state.custom.get("slope_grid") or _slope_cache[0]
+        if slopes is None:
             _slope_cache[0] = _compute_slope_normalized(state.elevation_grid)
-        slopes = _slope_cache[0]
+            state.custom["slope_grid"] = _slope_cache[0]
+            slopes = _slope_cache[0]
 
         rows = len(state.soil)
         if not rows:
@@ -1226,3 +1231,155 @@ def make_erosion_hook() -> object:
 
     _erosion_step.__name__ = "_erosion_step"
     return _erosion_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 9: Sediment Transport  (phase=+2, PRD v0.8.0 §5.2)
+# ---------------------------------------------------------------------------
+
+def make_sediment_hook(
+    k_erodibility: float = 0.005,
+    k_transport: float = 0.02,
+) -> object:
+    """Return a step function that routes detached soil via D8 each day.
+
+    Algorithm per day:
+      1. Read ``daily_erosion_index_grid`` written by the erosion hook.
+      2. Read ``surface_runoff_mm_today`` per cell from soil voxels.
+      3. Call ``calculate_sediment_transport`` per cell → eroded_mm grid.
+      4. Route eroded_mm downslope via the existing ``route_surface_water``
+         D8 function (identical routing, different payload).
+      5. Update ``state.custom['effective_soil_depth_cm_grid']``:
+           - donor cell  : depth -= eroded_mm / 10  (cm)
+           - receiver cell: depth += deposited_mm / 10 (cm)
+      6. Accumulate ``cumulative_sediment_*`` grids for observability.
+
+    Mass conservation guarantee:
+        sum(eroded) == sum(deposited) + boundary_escaped
+        where boundary_escaped is sediment from edge cells with no lower
+        neighbour (exits field domain, discarded identically to D8 water).
+
+    Dependencies:
+        Requires ``erosion=True`` (writes daily_erosion_index_grid) and
+        ``water_balance=True`` (writes surface_runoff_mm_today).
+    """
+    from cropforge.physics.soil import calculate_sediment_transport
+    from cropforge.physics.hydrology import route_surface_water
+
+    _slope_cache: list = [None]  # ponytail: lazy one-time compute, same pattern as erosion hook
+
+    def _sediment_step(state: "FieldState", env: "EnvironmentState") -> "FieldState":
+        """D8 sediment routing engine -- phase=+2 (day-end)."""
+        # Use slope from state.custom if available (set by erosion hook this day)
+        slopes = state.custom.get("slope_grid") or _slope_cache[0]
+        if slopes is None:
+            _slope_cache[0] = _compute_slope_normalized(state.elevation_grid)
+            state.custom["slope_grid"] = _slope_cache[0]
+            slopes = _slope_cache[0]
+
+        rows = len(state.soil)
+        if not rows:
+            return state
+        cols = len(state.soil[0])
+
+        # ---- Step 1-3: Compute eroded_mm per cell ----
+        daily_erosion = state.custom.get("daily_erosion_index_grid") or [
+            [0.0] * cols for _ in range(rows)
+        ]
+
+        eroded_grid = [[0.0] * cols for _ in range(rows)]
+        for r in range(rows):
+            for c in range(cols):
+                cell_soils = state.soil[r][c]
+                if not cell_soils:
+                    continue
+                runoff = cell_soils[0].custom.get("surface_runoff_mm_today", env.rainfall_mm)
+                idx = daily_erosion[r][c]
+                slope = slopes[r][c]
+                eroded, _ = calculate_sediment_transport(
+                    idx, runoff, slope, k_erodibility, k_transport
+                )
+                # Cap erosion by available layer-0 thickness (safety floor)
+                if cell_soils:
+                    available_mm = max(0.0, cell_soils[0].depth_bottom_cm - cell_soils[0].depth_top_cm) * 10.0
+                    eroded = min(eroded, max(0.0, available_mm - 1.0))  # keep at least 1mm of topsoil
+                eroded_grid[r][c] = eroded
+
+        # ---- Step 4: D8 route eroded soil downslope ----
+        # ponytail: reuse route_surface_water — same D8 algorithm, different payload
+        elev = state.elevation_grid.tolist()
+        deposit_grid = route_surface_water(eroded_grid, elev)
+
+        # ---- Step 5: Update effective soil depth ----
+        depth_grid = state.custom.get("effective_soil_depth_cm_grid")
+        if depth_grid is None:
+            # Fallback: build from bottom of soil profile (should always exist post-init)
+            depth_grid = [
+                [
+                    (state.soil[r][c][-1].depth_bottom_cm if state.soil[r][c] else 30.0)
+                    for c in range(cols)
+                ]
+                for r in range(rows)
+            ]
+            state.custom["effective_soil_depth_cm_grid"] = depth_grid
+
+        for r in range(rows):
+            for c in range(cols):
+                loss_cm = eroded_grid[r][c] / 10.0    # mm → cm
+                gain_cm = deposit_grid[r][c] / 10.0
+                depth_grid[r][c] = max(0.0, depth_grid[r][c] - loss_cm + gain_cm)
+
+                # ---- Task 2: Expand / contract Layer-0 thickness (PRD v0.8.0 §6.2) ----
+                cell_soils = state.soil[r][c]
+                if cell_soils:
+                    vox0 = cell_soils[0]
+                    net_cm = gain_cm - loss_cm
+                    new_bottom = vox0.depth_bottom_cm + net_cm
+                    # Floor: 0.1cm so layer never vanishes; ponytail: expose layer-1 in v0.9.0
+                    vox0.depth_bottom_cm = max(vox0.depth_top_cm + 0.1, new_bottom)
+
+        # ---- Task 3: Burial penalty (PRD v0.8.0 §6.3) ----
+        _BURIAL_THRESHOLD_MM = 50.0   # ponytail: constant; make configurable when user requests
+        for plant in state.plants:
+            if not plant.alive:
+                continue
+            dep = deposit_grid[plant.row][plant.col]
+            if dep > _BURIAL_THRESHOLD_MM and plant.height_cm < dep:
+                # Rapid deep deposition buries small plants
+                plant.stress_index = min(1.0, plant.stress_index + 0.5)
+
+        # ---- Task 1: Update elevation grid + refresh slope for next day's erosion ----
+        # (PRD v0.8.0 §6.1 — geomorphological feedback)
+        for r in range(rows):
+            for c in range(cols):
+                delta_m = (deposit_grid[r][c] - eroded_grid[r][c]) / 1000.0  # mm → m
+                state.elevation_grid[r, c] += delta_m
+
+        # Recompute slope from updated DEM; stored in state.custom for next day's erosion hook
+        state.custom["slope_grid"] = _compute_slope_normalized(state.elevation_grid)
+
+        # ---- Step 6: Accumulate season grids for observability ----
+        for key, grid in (
+            ("cumulative_sediment_eroded_mm_grid",   eroded_grid),
+            ("cumulative_sediment_deposited_mm_grid", deposit_grid),
+        ):
+            if key not in state.custom:
+                state.custom[key] = [[0.0] * cols for _ in range(rows)]
+            cum = state.custom[key]
+            for r in range(rows):
+                for c in range(cols):
+                    cum[r][c] += grid[r][c]
+
+        state.custom["daily_sediment_eroded_mm_grid"]    = eroded_grid
+        state.custom["daily_sediment_deposited_mm_grid"] = deposit_grid
+
+        logger.debug(
+            "Sediment hook: day=%d total_eroded=%.4f mm total_deposited=%.4f mm.",
+            env.day,
+            sum(eroded_grid[r][c] for r in range(rows) for c in range(cols)),
+            sum(deposit_grid[r][c] for r in range(rows) for c in range(cols)),
+        )
+        return state
+
+    _sediment_step.__name__ = "_sediment_step"
+    return _sediment_step

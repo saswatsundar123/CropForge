@@ -290,3 +290,119 @@ class ConventionalTill(LandPrep):
             "bulk_density_delta": -0.15,
             "surface_roughness_index": 0.8,  # high — freshly broken clods
         }
+
+
+class TiedRidges(LandPrep):
+    """Tied ridge-furrow: alternating ridges with periodic perpendicular tie dams
+    that block D8 lateral flow and create micro-catchments (PRD v0.8.0 §7.1).
+
+    Builds on the RidgeFurrow cosine wave, then overlays discrete tie dams
+    across the furrows at ``tie_spacing_m`` intervals along the row axis.
+    Each tie dam raises furrow-floor cells by ``tie_height_m``.
+
+    Parameters
+    ----------
+    ridge_height_m:
+        Height of each ridge above base (metres).  Default 0.20.
+    ridge_spacing_m:
+        Centre-to-centre distance between ridge peaks (metres). Default 0.75.
+    tie_spacing_m:
+        Row distance between successive tie dams (metres). Default 3.0.
+    tie_height_m:
+        Height of each tie dam above the furrow floor (metres). Default 0.10.
+    """
+
+    def __init__(
+        self,
+        ridge_height_m: float = 0.20,
+        ridge_spacing_m: float = 0.75,
+        tie_spacing_m: float = 3.0,
+        tie_height_m: float = 0.10,
+    ) -> None:
+        if tie_spacing_m <= 0:
+            raise ValueError("tie_spacing_m must be positive.")
+        if tie_height_m < 0:
+            raise ValueError("tie_height_m must be non-negative.")
+        self._base = RidgeFurrow(
+            ridge_spacing_m=ridge_spacing_m,
+            ridge_height_m=ridge_height_m,
+        )
+        self.tie_spacing_m = tie_spacing_m
+        self.tie_height_m = tie_height_m
+
+    def apply(self, elevation_grid: np.ndarray, resolution_m: float) -> tuple[np.ndarray, dict]:
+        modified, soil_mods = self._base.apply(elevation_grid, resolution_m)
+        rows, _ = modified.shape
+
+        # Place tie dams at every tie_spacing_m along the row axis
+        tie_interval_rows = max(1, round(self.tie_spacing_m / resolution_m))
+        for r in range(0, rows, tie_interval_rows):
+            modified[r, :] += self.tie_height_m  # raise entire tie row
+
+        # Higher roughness than plain RidgeFurrow (ties add micro-dams)
+        soil_mods = dict(soil_mods)   # don't mutate _base's dict
+        soil_mods["surface_roughness_index"] = 0.7
+        return modified, soil_mods
+
+
+class VegetativeFilterStrip(LandPrep):
+    """Dense perennial grass strip at the downslope edge of a field that traps
+    incoming sediment and runoff (PRD v0.8.0 §7.2).
+
+    Unlike geometric modifiers, this class does not carve the elevation grid.
+    Instead it returns per-cell soil overrides (``surface_roughness_index=0.95``)
+    for the strip rows, exploiting the existing erosion / sediment damping equations.
+
+    The strip occupies the last *N* rows of the field grid (``edge='bottom'``,
+    which is the downslope boundary in a typical slope-to-valley setup).
+
+    Parameters
+    ----------
+    width_m:
+        Physical width of the strip (metres). Number of rows = ceil(width_m / resolution_m).
+    edge:
+        Which field edge the strip occupies: ``'bottom'`` (default) or ``'top'``.
+    roughness:
+        Surface roughness index assigned to strip cells.  Default 0.95.
+    """
+
+    def __init__(
+        self,
+        width_m: float = 3.0,
+        edge: str = "bottom",
+        roughness: float = 0.95,
+    ) -> None:
+        if width_m <= 0:
+            raise ValueError("width_m must be positive.")
+        if edge not in ("bottom", "top"):
+            raise ValueError("edge must be 'bottom' or 'top'.")
+        self.width_m = width_m
+        self.edge = edge
+        self.roughness = roughness
+
+    def apply(
+        self,
+        elevation_grid: np.ndarray,
+        resolution_m: float,
+    ) -> tuple[np.ndarray, dict, dict]:
+        """Return (unchanged elevation, empty global soil_mods, per_cell_mods).
+
+        ``per_cell_mods`` maps ``(row, col) → {"surface_roughness_index": value}``.
+        farm._init_field_state applies these per-cell (not broadcast to all cells).
+        """
+        rows, cols = elevation_grid.shape
+        n_strip_rows = max(1, math.ceil(self.width_m / resolution_m))
+
+        if self.edge == "bottom":
+            strip_rows = range(rows - n_strip_rows, rows)
+        else:
+            strip_rows = range(0, n_strip_rows)
+
+        per_cell: dict = {
+            (r, c): {"surface_roughness_index": self.roughness}
+            for r in strip_rows
+            for c in range(cols)
+        }
+        # No global soil changes; no elevation change (vegetation doesn't reshape ground)
+        return elevation_grid.copy(), {}, per_cell
+

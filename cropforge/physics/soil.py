@@ -173,3 +173,62 @@ def calculate_erosion_index(
     roughness_damper = max(0.0, 1.0 - surface_roughness)
     veg_damper = max(0.0, 1.0 - vegetation_cover_frac)
     return runoff_mm * slope_frac * roughness_damper * veg_damper
+
+
+# ---------------------------------------------------------------------------
+# Sediment transport capacity (PRD v0.8.0 §5.2)
+# ---------------------------------------------------------------------------
+
+def calculate_sediment_transport(
+    erosion_index: float,
+    runoff_mm: float,
+    slope_frac: float,
+    k_erodibility: float = 0.005,
+    k_transport: float = 0.02,
+) -> tuple:
+    """Translate dimensionless erosion index into detached soil depth (mm).
+
+    Two-step model (simplified stream-power transport capacity):
+
+        potential_eroded_mm = erosion_index × k_erodibility
+        transport_cap_mm    = k_transport × runoff_mm × slope_frac
+
+    Actual eroded = min(potential, cap): entrainment is bounded by the
+    hydraulic transport capacity.  Returns (0.0, 0.0) whenever
+    runoff_mm or slope_frac is zero, guaranteeing flat cells produce
+    no sediment output (mass-conservation floor).
+
+    Parameters
+    ----------
+    erosion_index:
+        Dimensionless index from ``calculate_erosion_index``.
+    runoff_mm:
+        Surface runoff today (mm) from the tipping-bucket model.
+    slope_frac:
+        Normalised slope (0–1) from ``_compute_slope_normalized``.
+    k_erodibility:
+        Soil erodibility coefficient; mm of detachment per erosion-index unit.
+        Default 0.005.  ponytail: constant; RUSLE K-factor table when soils differ.
+    k_transport:
+        Transport capacity coefficient.  Default 0.02.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(eroded_mm, transport_cap_mm)`` both >= 0.
+
+    Examples
+    --------
+    >>> calculate_sediment_transport(0.0, 20.0, 0.5)   # no erosion index
+    (0.0, 0.0)
+    >>> calculate_sediment_transport(10.0, 20.0, 0.0)  # flat cell
+    (0.0, 0.0)
+    >>> eroded, cap = calculate_sediment_transport(10.0, 20.0, 0.5)
+    >>> round(eroded, 4), round(cap, 4)
+    (0.05, 0.2)
+    """
+    if erosion_index <= 0.0 or runoff_mm <= 0.0 or slope_frac <= 0.0:
+        return (0.0, 0.0)
+    potential = erosion_index * k_erodibility
+    cap = k_transport * runoff_mm * slope_frac
+    return (min(potential, cap), cap)

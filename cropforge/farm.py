@@ -184,6 +184,21 @@ class Field:
         self._land_prep: Optional[Any] = None
 
     # ------------------------------------------------------------------
+    # Physical area properties (PRD v0.8.0 §4.2)
+    # ------------------------------------------------------------------
+
+    @property
+    def cell_area_m2(self) -> float:
+        """Physical area of one grid cell in m² (resolution_m²). Default 1.0."""
+        res = self._terrain.resolution_m if self._terrain is not None else 1.0
+        return res * res
+
+    @property
+    def field_area_m2(self) -> float:
+        """Total physical field area in m² (rows × cols × cell_area_m2)."""
+        return self.rows * self.cols * self.cell_area_m2
+
+    # ------------------------------------------------------------------
     # Attachment methods (PRD Section 6.1)
     # ------------------------------------------------------------------
 
@@ -531,10 +546,13 @@ class Field:
         resolution_m = self._terrain.resolution_m if self._terrain is not None else 1.0
         effective_elevation = self.elevation_grid.copy()
         _soil_deltas: dict = {}
+        _per_cell_mods: dict = {}
         if self._land_prep is not None:
-            effective_elevation, _soil_deltas = self._land_prep.apply(
-                effective_elevation, resolution_m
-            )
+            _result = self._land_prep.apply(effective_elevation, resolution_m)
+            if len(_result) == 3:
+                effective_elevation, _soil_deltas, _per_cell_mods = _result
+            else:
+                effective_elevation, _soil_deltas = _result
 
         self._field_state = FieldState(
             day=day,
@@ -550,6 +568,15 @@ class Field:
         # Stamp land prep soil property deltas onto every voxel (PRD v0.6.0 §6.5)
         if _soil_deltas:
             self._apply_land_prep_deltas(self._field_state, _soil_deltas)
+        # Per-cell overrides from LandPrep subclasses that return a 3-tuple
+        # (e.g. VegetativeFilterStrip). Applied after global deltas so strip
+        # cells get their specific roughness even if global delta differs.
+        for (r, c), cell_mods in _per_cell_mods.items():
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                for voxel in self._field_state.soil[r][c]:
+                    for key, val in cell_mods.items():
+                        setattr(voxel, key, float(val))
+
 
         # v0.7.0 -- Effective soil depth per cell for root clamping (PRD v0.7.0 §7.3)
         # delta = (post-land-prep elevation) - (base elevation), in metres.
@@ -852,6 +879,10 @@ class Farm:
         clod_decay_factor: float = 0.05,
         # Erosion engine parameters
         erosion: bool = False,
+        # Sediment transport parameters (PRD v0.8.0 §5.2)
+        sediment_transport: bool = False,
+        k_erodibility: float = 0.005,
+        k_transport: float = 0.02,
         # Disease engine parameters
         disease_foci: list | None = None,
         disease_spread_rate: float = 0.15,
@@ -946,6 +977,7 @@ class Farm:
             PHASE_DISEASE_ENGINE,
             PHASE_CLOD_ENGINE,
             PHASE_EROSION_ENGINE,
+            PHASE_SEDIMENT_ENGINE,
             make_et0_hook,
             make_root_impedance_hook,
             make_hydrology_hook,
@@ -956,6 +988,7 @@ class Farm:
             make_root_clamp_hook,
             make_clod_dynamics_hook,
             make_erosion_hook,
+            make_sediment_hook,
         )
         from cropforge.runtime import CropForgeConfigError
 
@@ -993,6 +1026,7 @@ class Farm:
             "root_clamping": root_clamping,
             "clod_dynamics": clod_dynamics,
             "erosion": erosion,
+            "sediment_transport": sediment_transport,
             "disease": disease,
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
@@ -1099,9 +1133,25 @@ class Farm:
                 self.name, PHASE_EROSION_ENGINE,
             )
 
+        if sediment_transport:
+            if not erosion:
+                from cropforge.runtime import CropForgeConfigError
+                raise CropForgeConfigError(
+                    "use_physics(sediment_transport=True) requires erosion=True. "
+                    "The sediment hook reads daily_erosion_index_grid written by the "
+                    "erosion engine. Enable: use_physics(erosion=True, sediment_transport=True)."
+                )
+            hook = make_sediment_hook(k_erodibility=k_erodibility, k_transport=k_transport)
+            self._physics_registry.append((PHASE_SEDIMENT_ENGINE, hook))
+            logger.info(
+                "Farm %r: Sediment transport engine enabled (phase=%d).",
+                self.name, PHASE_SEDIMENT_ENGINE,
+            )
+
         if not any([et0, root_impedance, water_balance,
                      nutrients, lateral_flow, radiation,
-                     disease, terrain_wind, root_clamping, clod_dynamics, erosion]):
+                     disease, terrain_wind, root_clamping, clod_dynamics, erosion,
+                     sediment_transport]):
             logger.debug(
                 "Farm %r: use_physics() called with all engines disabled -- no-op.",
                 self.name,
@@ -1181,9 +1231,13 @@ class Farm:
 
         for f in self._fields:
             if f._field_state is None:
-                raise RuntimeError(
-                    f"Field {f.name!r} has no state yet. Call farm.run() before save_state()."
+                raise CropForgeStateError(
+                    f"Field {f.name!r} has no simulation state. "
+                    "Call farm.run() before farm.save_state().",
+                    path="(none)",
+                    reason="run() not yet called",
                 )
+
 
             field_entry = {
                 "field_name": f.name,
@@ -1352,9 +1406,11 @@ class Farm:
         >>> farm.run(days=120)           # Season 2 (Parquet days 121-240)
         """
         if self._is_running:
-            raise RuntimeError(
-                "prepare_next_season() cannot be called while farm.run() is executing."
+            raise CropForgeConfigError(
+                "prepare_next_season() cannot be called while farm.run() is executing. "
+                "Wait for the current run to complete before starting the next season."
             )
+
 
         # Advance season counter and save the total days run so far as the offset
         self._current_season += 1

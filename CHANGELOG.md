@@ -8,7 +8,30 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-07-05
+## [0.8.0] - 2026-07-05
+
+### Added
+
+- **Sub-metre resolution**: `Terrain` now accepts `resolution_m` (default `1.0` m — fully backward compatible). All physics engines (runoff, LS factor, D8 routing, nutrient flux) scale correctly at any cell size. `Terrain.from_array(arr, resolution_m=…)` added for direct NumPy ingestion.
+- **Sediment transport**: eroded soil is routed downslope via D8 flow and deposited in accumulation zones. Mass is conserved to floating-point precision — every gram eroded either deposits in a downslope cell or exits the field boundary. New `SoilState` fields: `sediment_flux_kg_m2`, `sediment_deposited_kg_m2`, `cumulative_sediment_loss_kg_m2`, `cumulative_deposition_kg_m2`.
+- **Geomorphological feedback**: the terrain elevation grid updates daily from net sediment flux; slope and aspect recompute automatically for the next timestep. Layer 0 topsoil depth expands with deposition and contracts with erosion (1 mm bedrock floor).
+- **`TiedRidges` land prep**: ridge-furrow geometry with periodic perpendicular tie-dams that block D8 lateral flow and form micro-catchments. Proved to reduce cumulative field erosion vs. plain ridge-furrow.
+- **`VegetativeFilterStrip` land prep**: dense grass strip at the field boundary stamps per-cell `surface_roughness_index = 0.95`, reducing soil detachment by ~95% in strip rows. Upslope cells are unaffected.
+- **Terrain LOD renderer**: the Three.js viewport now chunks terrain into 64×64-cell tiles with two pre-built geometry levels (hi-res and 16× downsampled lo-res). Distant tiles switch to lo-res automatically; off-screen tiles are frustum-culled. For a 500×500 sub-metre field this reduces the rendered vertex count from ~270 K to ~18 K (14× reduction) when zoomed out.
+
+### Changed
+
+- **Exception standardisation**: two bare `RuntimeError` calls replaced with typed exceptions — `CropForgeStateError` (save before run) and `CropForgeConfigError` (season change during run).
+
+### Tested
+
+- **798 tests passing**, 1 skipped, 0 failures. Zero regressions across all prior physics, terrain, and visualization modules.
+- Mass conservation verified analytically: `Σ(erosion) = Σ(export) + Σ(deposition)` across all sediment routing tests.
+- LOD crucible: 500×500 sub-metre field loads successfully; distant polygon count confirmed at 18,496 vs 270,400 at full resolution.
+
+---
+
+## [0.7.0] - 2026-06-28
 
 ### Added
 - **Topographical Physics:** Advanced opt-in physics modules that leverage the 3D terrain system.
@@ -25,7 +48,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - Extensively audited backwards-compatibility across flat-field runs and legacy datasets.
 - Test suite expanded to 742 passing tests with full coverage for Erosion and Clod mechanics.
 
-## [0.6.0] - 2026-07-04
+## [0.6.0] - 2026-06-27
 
 ### Added
 - **Terrain Engine:** Procedural, CSV, and GeoTIFF topographies supported via the new `Terrain` class.

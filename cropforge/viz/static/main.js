@@ -58,6 +58,14 @@ const _quat = new THREE.Quaternion();  // identity, never rotated
 const _scl = new THREE.Vector3();
 const _mat = new THREE.Matrix4();
 
+// Terrain LOD chunk tracking (v0.8.0 Phase 5)
+// ponytail: two pre-built geometries per chunk, swap on distance threshold.
+// Ceiling: >256 chunks with animated terrain would need GPU-side LOD; add when needed.
+let _terrainChunks = [];   // [{mesh, cx, cz, geoHi, geoLo, isLo}]
+const _CHUNK_CELLS = 64;   // cells per chunk edge
+const _LOD_LO_SQ  = 80 * 80;  // world-unit² distance to switch to lo-res
+const _LOD_HI_SQ  = 55 * 55;  // hysteresis — switch back to hi when closer than this
+
 // Raycasting
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -247,16 +255,18 @@ function initScene() {
   const fill = new THREE.HemisphereLight(0x4060a0, 0x2c4a2c, 0.35);
   scene.add(fill);
 
-  // Ground plane (soil surface texture)
-  buildGroundPlane(fieldW, fieldD);
+  // Ground plane (soil surface) — chunked LOD terrain (v0.8.0 Phase 5)
+  buildTerrainChunks(fieldW, fieldD);
 
-  // Grid helper (subtle)
-  const grid = new THREE.GridHelper(
-    Math.max(fieldW, fieldD) + 4, Math.max(meta.cols, meta.rows) + 2,
-    0xEAEAEA, 0xF9F9F8
-  );
-  grid.position.set(fieldW * 0.5 - 0.5, -0.01, fieldD * 0.5 - 0.5);
-  scene.add(grid);
+  // Grid helper (subtle) — skip for huge grids to avoid overdraw
+  if (meta.cols <= 200 && meta.rows <= 200) {
+    const grid = new THREE.GridHelper(
+      Math.max(fieldW, fieldD) + 4, Math.max(meta.cols, meta.rows) + 2,
+      0xEAEAEA, 0xF9F9F8
+    );
+    grid.position.set(fieldW * 0.5 - 0.5, -0.01, fieldD * 0.5 - 0.5);
+    scene.add(grid);
+  }
 
   // Build instanced plant mesh
   buildInstancedMesh();
@@ -268,58 +278,109 @@ function initScene() {
   window.addEventListener('resize', onResize);
 }
 
-function buildGroundPlane(fieldW, fieldD) {
-  // v0.6.0 — Terrain-aware ground: subdivide to rows×cols and deform vertices.
+// Build a single chunk's PlaneGeometry, optionally downsampled.
+// r0/c0 = top-left cell index; rN/cN = exclusive end. step = 1 (hi) or 4 (lo).
+function _buildChunkGeo(r0, c0, rN, cN, step, spacing, eMin, elevScale) {
+  const sampR = Math.ceil((rN - r0) / step);
+  const sampC = Math.ceil((cN - c0) / step);
+  const w = (sampC - 1) * step * spacing;
+  const d = (sampR - 1) * step * spacing;
+  const geo = new THREE.PlaneGeometry(
+    Math.max(step * spacing, w),
+    Math.max(step * spacing, d),
+    Math.max(1, sampC - 1),
+    Math.max(1, sampR - 1),
+  );
+  geo.rotateX(-Math.PI / 2);
+
+  if (terrainGrid && elevScale > 0) {
+    const pos = geo.attributes.position;
+    let vi = 0;
+    for (let ri = 0; ri < sampR; ri++) {
+      for (let ci = 0; ci < sampC; ci++) {
+        const row = Math.min(r0 + ri * step, rN - 1);
+        const col = Math.min(c0 + ci * step, cN - 1);
+        const elev = (terrainGrid[row * terrainCols + col] - eMin) * elevScale;
+        pos.setY(vi, elev - 0.02);
+        vi++;
+      }
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  }
+  return geo;
+}
+
+function buildTerrainChunks(fieldW, fieldD) {
+  // Dispose any existing chunks (field-switch teardown)
+  for (const ch of _terrainChunks) {
+    scene.remove(ch.mesh);
+    ch.geoHi.dispose();
+    ch.geoLo.dispose();
+  }
+  _terrainChunks = [];
+
   const cols = meta.cols;
   const rows = meta.rows;
   const spacing = meta.grid_spacing;
 
-  // ponytail: true boundaries of the plant grid, no +4 padding
-  const trueW = (cols - 1) * spacing;
-  const trueD = (rows - 1) * spacing;
-
-  // PlaneGeometry segments map 1:1 with field cells
-  const geo = new THREE.PlaneGeometry(
-    trueW,
-    trueD,
-    Math.max(1, cols - 1),
-    Math.max(1, rows - 1),
-  );
-
-  geo.rotateX(-Math.PI / 2);
-
+  // Compute elevation scale once (same logic as old buildGroundPlane)
+  let eMin = 0, elevScale = 0;
   if (terrainGrid && terrainGrid.length === rows * cols) {
-    let eMin = Infinity, eMax = -Infinity;
+    let eMax = -Infinity;
+    eMin = Infinity;
     for (let i = 0; i < terrainGrid.length; i++) {
       if (terrainGrid[i] < eMin) eMin = terrainGrid[i];
       if (terrainGrid[i] > eMax) eMax = terrainGrid[i];
     }
     const eRange = eMax - eMin || 1.0;
-    const elevScale = Math.min(3.0, (cols * spacing) * 0.15) / eRange;
-
-    // Cache for use in showDay — computed once here, never again
-    _terrainEMin = eMin;
-    _terrainElevScale = elevScale;
-
-    const pos = geo.attributes.position;
-    for (let vi = 0; vi < pos.count; vi++) {
-      // ponytail: vertices map exactly to row-major terrainGrid
-      const elev = (terrainGrid[vi] - eMin) * elevScale;
-      pos.setY(vi, elev - 0.02);
-    }
-    pos.needsUpdate = true;
-    geo.computeVertexNormals();
+    elevScale = Math.min(3.0, (cols * spacing) * 0.15) / eRange;
   }
+  _terrainEMin = eMin;
+  _terrainElevScale = elevScale;
 
-  const mat = new THREE.MeshLambertMaterial({
-    color: 0xC8A97E,
-    side: THREE.FrontSide,
-  });
-  soilMesh = new THREE.Mesh(geo, mat);
-  // Center plane precisely over the plant grid bounds
-  soilMesh.position.set(trueW / 2, 0.0, trueD / 2);
-  soilMesh.receiveShadow = true;
-  scene.add(soilMesh);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xC8A97E, side: THREE.FrontSide });
+
+  for (let r0 = 0; r0 < rows; r0 += _CHUNK_CELLS) {
+    const rN = Math.min(r0 + _CHUNK_CELLS, rows);
+    for (let c0 = 0; c0 < cols; c0 += _CHUNK_CELLS) {
+      const cN = Math.min(c0 + _CHUNK_CELLS, cols);
+
+      const geoHi = _buildChunkGeo(r0, c0, rN, cN, 1, spacing, eMin, elevScale);
+      // ponytail: lo-res step=4; clamp so tiny chunks don't go below 1 sample
+      const loStep = Math.min(4, Math.max(1, Math.floor((cN - c0) / 2)));
+      const geoLo = _buildChunkGeo(r0, c0, rN, cN, loStep, spacing, eMin, elevScale);
+
+      const chunkMesh = new THREE.Mesh(geoHi, mat);
+
+      // Position: chunk centre in world space
+      const worldX = (c0 + (cN - c0) / 2) * spacing;
+      const worldZ = (r0 + (rN - r0) / 2) * spacing;
+      chunkMesh.position.set(worldX, 0.0, worldZ);
+      chunkMesh.receiveShadow = true;
+      chunkMesh.frustumCulled = true;
+      scene.add(chunkMesh);
+
+      _terrainChunks.push({ mesh: chunkMesh, cx: worldX, cz: worldZ, geoHi, geoLo, isLo: false });
+    }
+  }
+}
+
+function updateTerrainLOD() {
+  if (!_terrainChunks.length) return;
+  const cx = camera.position.x;
+  const cz = camera.position.z;
+  for (const ch of _terrainChunks) {
+    const dx = cx - ch.cx, dz = cz - ch.cz;
+    const distSq = dx * dx + dz * dz;
+    if (!ch.isLo && distSq > _LOD_LO_SQ) {
+      ch.mesh.geometry = ch.geoLo;
+      ch.isLo = true;
+    } else if (ch.isLo && distSq < _LOD_HI_SQ) {
+      ch.mesh.geometry = ch.geoHi;
+      ch.isLo = false;
+    }
+  }
 }
 
 function buildInstancedMesh() {
@@ -725,6 +786,7 @@ window.addEventListener('message', (event) => {
     }
     scene = null; camera = null; controls = null; mesh = null; soilMesh = null;
     frames = {}; meta = null; terrainGrid = null; terrainRows = 0; terrainCols = 0;
+    _terrainChunks = [];
 
     // Show loader again before re-bootstrapping
     loader.style.display = 'flex';
@@ -754,6 +816,7 @@ varSelect.addEventListener('change', () => {
 function animate() {
   requestAnimationFrame(animate);
   if (controls) controls.update();
+  updateTerrainLOD();
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
