@@ -10,19 +10,21 @@ PRD References:
     PRD v0.2.0   — Multi-field support: each field has its own buffer store,
                    served via ?field= query parameter.
 
-Binary frame layout (per plant, 9 × float32 = 36 bytes):
-    [0]  x          — column index (grid position)
-    [1]  y          — height_cm scaled to scene units (0.0 on dead plants)
-    [2]  z          — row index (grid position)
-    [3]  half_h     — half-height (y offset so cylinder sits on ground)
-    [4]  radius     — LAI proxy (clamped to reasonable cylinder radius)
-    [5]  r          — colour red   channel [0..1]
-    [6]  g          — colour green channel [0..1]
-    [7]  b          — colour blue  channel [0..1]
-    [8]  alive      — 1.0 = alive, 0.0 = dead (as float for buffer alignment)
+Binary frame layout (per plant, 11 × float32 = 44 bytes):
+    [0]  x              — column index (grid position)
+    [1]  y              — height_cm scaled to scene units (0.0 on dead plants)
+    [2]  z              — row index (grid position)
+    [3]  half_h         — half-height (y offset so cylinder sits on ground)
+    [4]  radius         — LAI proxy (clamped to reasonable cylinder radius)
+    [5]  r              — colour red   channel [0..1]
+    [6]  g              — colour green channel [0..1]
+    [7]  b              — colour blue  channel [0..1]
+    [8]  alive          — 1.0 = alive, 0.0 = dead (as float for buffer alignment)
+    [9]  model_index    — integer key into model_index_map (0 = cylinder fallback)
+    [10] stage_progress — fractional progress within current pheno stage [0.0, 1.0]
 
-Total buffer per day  = n_plants × 9 × 4 bytes
-Total buffer all days = n_days   × n_plants × 9 × 4 bytes
+Total buffer per day  = n_plants × 11 × 4 bytes
+Total buffer all days = n_days   × n_plants × 11 × 4 bytes
 
 Multi-field API (v0.2.0):
     FIELD_STORES[field_name] → BufferStore instance per field.
@@ -52,7 +54,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Floats per plant in the binary frame (see layout above)
-FLOATS_PER_PLANT = 9
+FLOATS_PER_PLANT = 11   # v0.9.0 Phase 2: +model_index [9], +stage_progress [10]
 BYTES_PER_PLANT  = FLOATS_PER_PLANT * 4      # float32 = 4 bytes
 
 # PRD Section 7.3: dead plant colour = #8B6914 (dried brown)
@@ -144,6 +146,7 @@ class BufferStore:
         self._frames:    Dict[int, bytes] = {}
         self._meta:      Dict = {}
         self._ready:     bool = False
+        self._model_index_map: Dict[str, int] = {}
 
     def build(
         self,
@@ -187,6 +190,15 @@ class BufferStore:
         else:
             vmin, vmax = 0.0, 1.0
 
+        # Build model_index_map: model_id string → unique int index (0 = no model / cylinder).
+        # ponytail: sort for determinism; 0 is reserved for empty string.
+        if "model_id" in plants_df.columns:
+            unique_ids = sorted(set(plants_df["model_id"].dropna().unique()) - {""})
+            model_index_map = {uri: (i + 1) for i, uri in enumerate(unique_ids)}
+        else:
+            model_index_map = {}
+        self._model_index_map = model_index_map  # kept for _pack_frame lookup
+
         logger.info(
             "BufferStore.build(): field=%s variable=%s, vmin=%.3f, vmax=%.3f, "
             "days=%d, plants/day=%d",
@@ -200,19 +212,21 @@ class BufferStore:
             self._frames[int(day)] = frame
 
         self._meta = {
-            "field_name":   self.field_name,
-            "n_plants":     self.n_plants,
-            "n_days":       self.n_days,
-            "rows":         self.rows,
-            "cols":         self.cols,
-            "days":         [int(d) for d in days],
-            "variable":     variable,
-            "vmin":         vmin,
-            "vmax":         vmax,
-            "bytes_per_plant":  BYTES_PER_PLANT,
-            "floats_per_plant": FLOATS_PER_PLANT,
-            "grid_spacing":     _GRID_SPACING,
-            "cm_to_world":      _CM_TO_WORLD,
+            "field_name":        self.field_name,
+            "n_plants":          self.n_plants,
+            "n_days":            self.n_days,
+            "rows":              self.rows,
+            "cols":              self.cols,
+            "days":              [int(d) for d in days],
+            "variable":          variable,
+            "vmin":              vmin,
+            "vmax":              vmax,
+            "bytes_per_plant":   BYTES_PER_PLANT,
+            "floats_per_plant":  FLOATS_PER_PLANT,
+            "grid_spacing":      _GRID_SPACING,
+            "cm_to_world":       _CM_TO_WORLD,
+            # v0.9.0 Phase 2: model_id → int index (0 = cylinder fallback)
+            "model_index_map":   model_index_map,
         }
         self._ready = True
         logger.info(
@@ -286,6 +300,13 @@ class BufferStore:
                 view[base + 6] = g_c                        # G
                 view[base + 7] = b_c                        # B
                 view[base + 8] = 1.0 if alive else 0.0      # alive flag
+                # v0.9.0 Phase 2 — model_index and stage_progress
+                view[base + 9]  = float(self._model_index_map.get(
+                    rec.get("model_id", "") if rec is not None else "", 0
+                ))                                           # model_index (0=cylinder)
+                view[base + 10] = float(
+                    rec.get("stage_progress", 0.0) if rec is not None else 0.0
+                )                                            # stage_progress [0,1]
                 idx += 1
 
         return bytes(buf)

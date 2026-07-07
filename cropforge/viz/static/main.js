@@ -12,30 +12,35 @@
  *   - Timeline scrubber driven by postMessage from Dash parent
  *   - Raycasting: click a plant → highlight + postMessage PLANT_CLICKED
  *
- * Binary frame layout (9 × float32 per plant, 36 bytes):
- *   [0] x          grid col position (world units)
- *   [1] y          half-height (cylinder centre above ground)
- *   [2] z          grid row position (world units)
- *   [3] scaleY     full cylinder height (world units)
- *   [4] radius     cylinder radius
- *   [5] r          colour red   [0..1]
- *   [6] g          colour green [0..1]
- *   [7] b          colour blue  [0..1]
- *   [8] alive      1.0 = alive, 0.0 = dead
+ * Binary frame layout (11 × float32 per plant, 44 bytes):
+ *   [0]  x              grid col position (world units)
+ *   [1]  y              half-height (cylinder centre above ground)
+ *   [2]  z              grid row position (world units)
+ *   [3]  scaleY         full cylinder height (world units)
+ *   [4]  radius         cylinder radius
+ *   [5]  r              colour red   [0..1]
+ *   [6]  g              colour green [0..1]
+ *   [7]  b              colour blue  [0..1]
+ *   [8]  alive          1.0 = alive, 0.0 = dead
+ *   [9]  model_index    int key into meta.model_index_map (0 = cylinder fallback)
+ *   [10] stage_progress fractional progress within current pheno stage [0.0, 1.0]
  */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 
 // ---------------------------------------------------------------------------
 // Globals
 // ---------------------------------------------------------------------------
 
 const API = window.location.origin;           // same origin as iframe parent
-const FLOATS = 9;                                 // float32 values per plant
+const FLOATS = 11;                                // float32 values per plant (v0.9.0 Phase 2)
 const BYTES = FLOATS * 4;                        // bytes per plant
 
 let meta = null;   // buffer metadata from /api/buffer/meta
+let qualityEnhanced = false;  // true when quality="enhanced" (PBR shadows + HDR)
 let terrainGrid = null;   // Float32Array [rows*cols] row-major elevation values (v0.6.0)
 let terrainRows = 0;
 let terrainCols = 0;
@@ -45,7 +50,10 @@ let currentField = null;   // active field name (null = server default)
 let playing = false;
 let speedMult = 1;
 let playTimer = null;
-let mesh = null;   // THREE.InstancedMesh
+// v0.9.0 Phase 3: meshes map, keyed by model_index (0 = cylinder fallback).
+// ponytail: keep `mesh` as alias to meshes[0] — all selection/colour code unchanged.
+let meshes = {};   // {model_index: THREE.InstancedMesh}
+let mesh = null;   // alias → meshes[0], cylinder fallback
 let soilMesh = null;
 let renderer, scene, camera, controls;
 
@@ -92,6 +100,7 @@ const btnPlay = document.getElementById('btn-play');
 const btn1x = document.getElementById('btn-1x');
 const btn2x = document.getElementById('btn-2x');
 const btn5x = document.getElementById('btn-5x');
+const btnExportGlb = document.getElementById('btn-export-glb');
 
 // ---------------------------------------------------------------------------
 // 1. Bootstrap: fetch metadata, preload all frames
@@ -111,6 +120,7 @@ async function bootstrap(fieldName) {
     const r = await fetch(`${API}/api/buffer/meta${fieldParam}`);
     if (!r.ok) throw new Error(`meta HTTP ${r.status}`);
     meta = await r.json();
+    qualityEnhanced = (meta.quality_mode === 'enhanced');
   } catch (e) {
     setStatus(`ERROR: ${e.message}`, 0);
     return;
@@ -167,6 +177,8 @@ async function bootstrap(fieldName) {
   }
 
   initScene();
+  // Async GLTF loads: fire-and-forget; cylinders render immediately, GLTF meshes appear when ready
+  loadGltfMeshes();
   showDay(days[0]);
 
   // Hide iframe loader
@@ -242,14 +254,17 @@ function initScene() {
 
   const sun = new THREE.DirectionalLight(0xfff0d0, 1.4);
   sun.position.set(fieldW * 0.6, 20, fieldD * 0.3);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 200;
-  sun.shadow.camera.left = -fieldW * 0.7;
-  sun.shadow.camera.right = fieldW * 1.3;
-  sun.shadow.camera.top = fieldD * 1.3;
-  sun.shadow.camera.bottom = -fieldD * 0.7;
+  // ponytail: shadows are expensive — only enable in enhanced quality mode
+  sun.castShadow = qualityEnhanced;
+  if (qualityEnhanced) {
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 200;
+    sun.shadow.camera.left = -fieldW * 0.7;
+    sun.shadow.camera.right = fieldW * 1.3;
+    sun.shadow.camera.top = fieldD * 1.3;
+    sun.shadow.camera.bottom = -fieldD * 0.7;
+  }
   scene.add(sun);
 
   const fill = new THREE.HemisphereLight(0x4060a0, 0x2c4a2c, 0.35);
@@ -339,7 +354,14 @@ function buildTerrainChunks(fieldW, fieldD) {
   _terrainEMin = eMin;
   _terrainElevScale = elevScale;
 
-  const mat = new THREE.MeshLambertMaterial({ color: 0xC8A97E, side: THREE.FrontSide });
+  // PBR: MeshStandardMaterial for terrain — roughness=0.9 for soil, low metalness
+  // ponytail: shadows conditionally enabled by qualityEnhanced flag
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xC8A97E,
+    roughness: 0.9,
+    metalness: 0.0,
+    side: THREE.FrontSide,
+  });
 
   for (let r0 = 0; r0 < rows; r0 += _CHUNK_CELLS) {
     const rN = Math.min(r0 + _CHUNK_CELLS, rows);
@@ -357,7 +379,7 @@ function buildTerrainChunks(fieldW, fieldD) {
       const worldX = (c0 + (cN - c0) / 2) * spacing;
       const worldZ = (r0 + (rN - r0) / 2) * spacing;
       chunkMesh.position.set(worldX, 0.0, worldZ);
-      chunkMesh.receiveShadow = true;
+      chunkMesh.receiveShadow = qualityEnhanced;
       chunkMesh.frustumCulled = true;
       scene.add(chunkMesh);
 
@@ -383,23 +405,66 @@ function updateTerrainLOD() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Plant geometry factory — cylinder (index=0) or GLTF-sourced BufferGeometry
+// ---------------------------------------------------------------------------
+
+function _cylinderGeo() {
+  return new THREE.CylinderGeometry(1, 1, 1, 6, 1);
+}
+
+function _makePlantMat() {
+  // PBR plant material — instanced colour via instanceColor
+  return new THREE.MeshStandardMaterial({
+    roughness: 0.6,
+    metalness: 0.0,
+  });
+}
+
 function buildInstancedMesh() {
   const n = meta.n_plants;
+  const geo = _cylinderGeo();
+  const mat = _makePlantMat();
+  const im = new THREE.InstancedMesh(geo, mat, n);
+  im.castShadow = qualityEnhanced;
+  im.receiveShadow = false;
+  im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  im.frustumCulled = true;
+  scene.add(im);
+  meshes[0] = im;
+  mesh = im;   // backward-compat alias for selection/colour helpers
+}
 
-  // Cylinder: height=1, radius=1 — origin at centre.
-  // ponytail: do NOT translate — we offset position.y by half height in showDay
-  //           so the base stays on terrain at any scale.
-  const geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1);
-  const mat = new THREE.MeshLambertMaterial(); // Removed vertexColors: true to allow instanceColor to work correctly
+// Async GLTF loader — fires after initScene, adds meshes[model_index] when ready.
+// ponytail: one loader instance, reused for all URIs.
+const _gltfLoader = new GLTFLoader();
 
-  mesh = new THREE.InstancedMesh(geo, mat, n);
-  mesh.castShadow = true;
-  mesh.receiveShadow = false;
-  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  // Frustum culling: Three.js culls the whole InstancedMesh at bounding-sphere level.
-  // computeBoundingSphere() is called after first showDay to get accurate bounds.
-  mesh.frustumCulled = true;
-  scene.add(mesh);
+async function loadGltfMeshes() {
+  const indexMap = meta.model_index_map || {};
+  const n = meta.n_plants;
+  for (const [uri, idx] of Object.entries(indexMap)) {
+    try {
+      const gltf = await new Promise((res, rej) => _gltfLoader.load(uri, res, undefined, rej));
+      // Extract first BufferGeometry from the loaded scene
+      let geo = null;
+      gltf.scene.traverse(child => {
+        if (!geo && child.isMesh) geo = child.geometry.clone();
+      });
+      if (!geo) { console.warn(`GLTF ${uri}: no mesh found, using cylinder`); continue; }
+
+      const im = new THREE.InstancedMesh(geo, _makePlantMat(), n);
+      im.castShadow = qualityEnhanced;
+      im.receiveShadow = false;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.count = 0;   // hidden until showDay populates it
+      im.frustumCulled = true;
+      scene.add(im);
+      meshes[idx] = im;
+      console.log(`GLTF loaded: model_index=${idx} uri=${uri}`);
+    } catch (e) {
+      console.warn(`GLTF load failed for ${uri}:`, e, '— cylinder fallback active');
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -419,38 +484,47 @@ function showDay(day) {
   const cols = meta.cols;
   const minScale = 0.05;
   const minRadius = 0.08;
-
-  // Camera position for LOD distance check
   const camX = camera.position.x;
   const camZ = camera.position.z;
 
+  // Reset per-mesh instance counter (each mesh tracks its own count this frame)
+  // ponytail: use a plain object literal — cheap reset, no allocation.
+  const perMeshCount = {};
+  for (const idx of Object.keys(meshes)) perMeshCount[idx] = 0;
+
   for (let i = 0; i < n; i++) {
     const base = i * FLOATS;
+    const x            = frame[base + 0];
+    const z            = frame[base + 2];
+    const scaleY       = frame[base + 3];
+    const radius       = frame[base + 4];
+    let r              = frame[base + 5];
+    let g              = frame[base + 6];
+    let b              = frame[base + 7];
+    const alive        = frame[base + 8];
+    const model_index  = Math.round(frame[base + 9]);   // 0 = cylinder
+    const stage_progress = frame[base + 10];
 
-    const x      = frame[base + 0];
-    // frame[base+1] = halfH (legacy, kept for selection box compat)
-    const z      = frame[base + 2];
-    const scaleY = frame[base + 3];
-    const radius = frame[base + 4];
-    let r = frame[base + 5];
-    let g = frame[base + 6];
-    let b = frame[base + 7];
-    const alive = frame[base + 8];
+    // Route to the correct InstancedMesh; fall back to cylinder (index 0) if not loaded yet
+    const targetMesh = meshes[model_index] || meshes[0];
+    const slot = perMeshCount[model_index] ?? perMeshCount[0];
+    const useIndex0 = !meshes[model_index];
+    const slotMesh = useIndex0 ? meshes[0] : meshes[model_index];
+    // ponytail: instanceId within each mesh = its own sequential slot index
+    const slotIdx = useIndex0 ? (perMeshCount[0]++) : (perMeshCount[model_index]++);
 
-    // LOD: skip dead plants beyond threshold — they're invisible at distance anyway
+    // LOD: skip distant dead plants
     if (!alive) {
       const dx = x - camX, dz = z - camZ;
       if (dx * dx + dz * dz > _LOD_DEAD_SKIP_SQ) {
-        // Write a zero-scale matrix so the instance collapses to a point (no rasterization)
         _scl.set(0, 0, 0);
         _pos.set(x, 0, z);
         _mat.compose(_pos, _quat, _scl);
-        mesh.setMatrixAt(i, _mat);
+        slotMesh.setMatrixAt(slotIdx, _mat);
         continue;
       }
     }
 
-    // Terrain Y — cached from buildGroundPlane, no per-frame recompute
     let elevY = 0.0;
     if (terrainGrid) {
       const row = Math.floor(i / cols);
@@ -460,26 +534,31 @@ function showDay(day) {
         : 0.0;
     }
 
-    // Highlight selected plant
     if (i === selectedInstance) { r = 1.0; g = 1.0; b = 0.0; }
 
-    // matrix.compose with pre-allocated objects — zero GC pressure
-    // position.y = terrain elevation + half the clamped height,
-    // so the BASE of the cylinder always rests on terrain regardless of scale.
-    const clampedH = Math.max(scaleY, minScale);
+    const clampedH = Math.max(scaleY, minScale) * (1.0 + stage_progress * 0.05);
     _pos.set(x, elevY + clampedH * 0.5, z);
     _scl.set(Math.max(radius, minRadius), clampedH, Math.max(radius, minRadius));
     _mat.compose(_pos, _quat, _scl);
 
-    mesh.setMatrixAt(i, _mat);
-    mesh.setColorAt(i, colourBuf.setRGB(r, g, b));
+    slotMesh.setMatrixAt(slotIdx, _mat);
+    slotMesh.setColorAt(slotIdx, colourBuf.setRGB(r, g, b));
   }
 
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.instanceColor.needsUpdate = true;
-
-  // Update bounding sphere after first frame so frustum culling is accurate
-  if (day === meta.days[0]) mesh.geometry.computeBoundingSphere();
+  // Flush all active meshes; hide overflow slots by zeroing unused trailing instances
+  for (const [idxStr, im] of Object.entries(meshes)) {
+    const usedCount = perMeshCount[idxStr] ?? 0;
+    // Zero any slots beyond what we wrote this frame (in case count shrank)
+    if (usedCount < im.count) {
+      _scl.set(0, 0, 0); _pos.set(0, 0, 0);
+      _mat.compose(_pos, _quat, _scl);
+      for (let j = usedCount; j < im.count; j++) im.setMatrixAt(j, _mat);
+    }
+    im.count = usedCount;
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    if (day === meta.days[0]) im.geometry.computeBoundingSphere();
+  }
 
   // Update selection box position if a plant is selected
   if (selectedInstance >= 0) {
@@ -503,16 +582,16 @@ function showDay(day) {
 function onCanvasClick(event) {
   if (!mesh || !meta) return;
 
-  // Prevent firing when OrbitControls has just dragged (use a tiny drag threshold)
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
   raycaster.setFromCamera(pointer, camera);
-  const hits = raycaster.intersectObject(mesh);
+  // Check all loaded plant meshes (cylinder + any GLTF meshes)
+  const allMeshes = Object.values(meshes);
+  const hits = raycaster.intersectObjects(allMeshes);
 
   if (hits.length === 0) {
-    // Clicked empty space → deselect
     clearSelection();
     return;
   }
@@ -739,6 +818,33 @@ function setSpeed(m) {
 btn1x.addEventListener('click', () => setSpeed(1));
 btn2x.addEventListener('click', () => setSpeed(2));
 btn5x.addEventListener('click', () => setSpeed(5));
+
+// ---------------------------------------------------------------------------
+// Export scene as .glb — captures terrain + plant meshes for current day
+// ---------------------------------------------------------------------------
+
+function exportSceneAsGlb() {
+  if (!scene) return;
+  const exporter = new GLTFExporter();
+  // ponytail: export whole scene; binary=true → single .glb blob
+  exporter.parse(
+    scene,
+    (glb) => {
+      const blob = new Blob([glb], { type: 'model/gltf-binary' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cropforge_scene_day_${currentDay}.glb`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    (err) => console.error('GLTFExporter error:', err),
+    { binary: true },
+  );
+}
+
+if (btnExportGlb) btnExportGlb.addEventListener('click', exportSceneAsGlb);
+
 
 // ---------------------------------------------------------------------------
 // 8. postMessage listener (Dash → iframe day sync + plant selection)

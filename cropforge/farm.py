@@ -883,6 +883,11 @@ class Farm:
         sediment_transport: bool = False,
         k_erodibility: float = 0.005,
         k_transport: float = 0.02,
+        # Terrain feedback control (PRD v0.9.0 §4.3)
+        # True (default) = recompute slope/aspect daily after sediment update.
+        # False = freeze terrain geometry at init (faster; use for non-erosion studies).
+        terrain_feedback: bool = True,
+
         # Disease engine parameters
         disease_foci: list | None = None,
         disease_spread_rate: float = 0.15,
@@ -1027,6 +1032,7 @@ class Farm:
             "clod_dynamics": clod_dynamics,
             "erosion": erosion,
             "sediment_transport": sediment_transport,
+            "terrain_feedback": terrain_feedback,
             "disease": disease,
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
@@ -1141,7 +1147,7 @@ class Farm:
                     "The sediment hook reads daily_erosion_index_grid written by the "
                     "erosion engine. Enable: use_physics(erosion=True, sediment_transport=True)."
                 )
-            hook = make_sediment_hook(k_erodibility=k_erodibility, k_transport=k_transport)
+            hook = make_sediment_hook(k_erodibility=k_erodibility, k_transport=k_transport, terrain_feedback=terrain_feedback)
             self._physics_registry.append((PHASE_SEDIMENT_ENGINE, hook))
             logger.info(
                 "Farm %r: Sediment transport engine enabled (phase=%d).",
@@ -1463,31 +1469,22 @@ class Farm:
     # farm.visualize() (Section 6.5 — pre-flight stub)
     # ------------------------------------------------------------------
 
-    def visualize(self, log: Optional[str] = None) -> None:
-        """Launch the visual frontend (Phase 2).
-
-        Performs the pre-flight check (PRD Section 6.5), then starts the
-        FastAPI + Dash server and opens the default browser to
-        ``http://localhost:7860``.
+    def visualize(self, log: Optional[str] = None, quality: str = "standard") -> None:
+        """Launch the visual frontend.
 
         Parameters
         ----------
         log:
             Explicit path to a Parquet session directory.  If ``None``,
-            the log from the most recent ``farm.run()`` call in this session
-            is used (stored in ``self._last_log_path``).
+            the most recent ``farm.run()`` log is used.
+        quality:
+            ``"standard"`` (default) — identical rendering to v0.8.0, no shadows.
+            ``"enhanced"`` — PBR shadows on terrain and plants (higher GPU cost).
 
         Raises
         ------
         CropForgeVisualizeError
-            If no valid Parquet log is found (PRD Section 6.5, rule 2).
-
-        Notes
-        -----
-        PRD Section 6.5 pre-flight check:
-            1. Locate the log: explicit path > ``_last_log_path``.
-            2. If not found or empty → ``CropForgeVisualizeError``.
-            3. If version mismatch → warning printed, visualisation proceeds.
+            If no valid Parquet log is found.
         """
         import json
         from pathlib import Path
@@ -1549,7 +1546,59 @@ class Farm:
 
         # ---- Launch the server ----------------------------------------
         from cropforge.viz.server import boot
-        boot(log_path=str(log_dir.resolve()), cropforge_version=__version__)
+        boot(log_path=str(log_dir.resolve()), cropforge_version=__version__, quality=quality)
+
+    # ------------------------------------------------------------------
+    # farm.export_scene() — headless GLTF/GLB export (PRD v0.9.0 §5)
+    # ------------------------------------------------------------------
+
+    def export_scene(
+        self,
+        day: int,
+        filepath: str = "scene.glb",
+        field: Optional[str] = None,
+    ) -> "Path":
+        """Export the farm scene for *day* to a .glb file.
+
+        Parameters
+        ----------
+        day:
+            Simulation day to export (must exist in the run log).
+        filepath:
+            Destination path for the .glb file. Defaults to ``scene.glb``
+            in the current working directory.
+        field:
+            Field name to export. Defaults to the first field.
+
+        Returns
+        -------
+        pathlib.Path
+            Resolved path of the written file.
+
+        Raises
+        ------
+        CropForgeVisualizeError
+            If no valid Parquet log is found.
+        ImportError
+            If ``pygltflib`` is not installed.
+
+        Example
+        -------
+        >>> farm.run(days=30)
+        >>> farm.export_scene(day=15, filepath="out/day15.glb")
+        """
+        from pathlib import Path as _Path
+        from cropforge.runtime import CropForgeVisualizeError
+        from cropforge.export_gltf import export_scene as _export
+
+        resolved_log = self._last_log_path
+        if not resolved_log or not _Path(resolved_log).exists():
+            raise CropForgeVisualizeError(
+                "No valid simulation log found. Run farm.run() before export_scene()."
+            )
+
+        return _export(log_path=str(resolved_log), day=day, filepath=filepath, field=field)
+
 
 
     def __repr__(self) -> str:

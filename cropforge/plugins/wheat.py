@@ -57,6 +57,20 @@ def _get_stage(thermal_time: float) -> str:
     return stage
 
 
+def _get_stage_progress(thermal_time: float, stage: str) -> float:
+    """Fractional progress within *stage* [0.0, 1.0].
+
+    ponytail: uses existing _STAGE_TT/_STAGE_ORDER — no new data structures.
+    """
+    idx = _STAGE_ORDER.index(stage)
+    start_tt = _STAGE_TT[stage]
+    # End TT = next stage's threshold (or +400 for final stage as a sentinel)
+    end_tt = _STAGE_TT[_STAGE_ORDER[idx + 1]] if idx + 1 < len(_STAGE_ORDER) else start_tt + 400.0
+    if end_tt <= start_tt:
+        return 1.0
+    return min(1.0, max(0.0, (thermal_time - start_tt) / (end_tt - start_tt)))
+
+
 @register_crop("wheat")
 class StandardWheat(CropPlugin):
     """CERES-Wheat style crop plugin for CropForge.
@@ -137,8 +151,9 @@ class StandardWheat(CropPlugin):
         plant.custom["thermal_time"] = plant.custom.get("thermal_time", 0.0) + tt_today
         stage = _get_stage(plant.custom["thermal_time"])
         plant.custom["phenological_stage"] = stage
-        # Keep PlantState.phenological_stage in sync for the visualiser
+        # Keep PlantState fields in sync for the visualiser and buffer
         plant.phenological_stage = stage
+        plant.stage_progress = _get_stage_progress(plant.custom["thermal_time"], stage)
 
     def _update_lai(self, plant, env) -> None:
         """LAI development driven by thermal time; senescence during fill."""

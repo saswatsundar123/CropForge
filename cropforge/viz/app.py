@@ -534,6 +534,7 @@ def create_dash_app(log_path: str):
             grid-template-rows: 1fr;
             height: calc(100vh - 52px);
             animation: cfFadeIn 0.5s 0.08s cubic-bezier(0.32,0.72,0,1) both;
+            transition: grid-template-columns 0.3s cubic-bezier(0.32,0.72,0,1);
         }}
         @keyframes cfFadeIn {{
             from {{ opacity: 0; }}
@@ -949,6 +950,18 @@ def create_dash_app(log_path: str):
                     html.Button(
                         "⬇ Export CSV",
                         id="export-csv-btn",
+                        n_clicks=0,
+                        className="cf-btn",
+                    ),
+                    html.Button(
+                        "◀ L",
+                        id="toggle-left-btn",
+                        n_clicks=0,
+                        className="cf-btn",
+                    ),
+                    html.Button(
+                        "R ▶",
+                        id="toggle-right-btn",
                         n_clicks=0,
                         className="cf-btn",
                     ),
@@ -1471,8 +1484,10 @@ def create_dash_app(log_path: str):
     def _build_terrain_surface(overlay_var: str, day: int, selected_field: str):
         """v0.6.0 — Helper to render go.Surface for the Terrain Map.
         z = elevation_grid (physical metres), surfacecolor = overlay variable.
+        Upsampled 4× with scipy.ndimage.zoom for high-res visual quality (PRD v0.9.0 §5).
         """
         import numpy as np
+        from scipy.ndimage import zoom as _zoom
 
         terrain_info = None
         if _DATA["terrain"] and selected_field and selected_field in _DATA["terrain"]:
@@ -1550,28 +1565,52 @@ def create_dash_app(log_path: str):
                 except Exception:
                     pass  # keep elevation fallback
 
+        # Upsample both grids 4× — z (bicubic) and surfacecolor (linear) must match shape.
+        # ponytail: zoom both here, once, so every caller gets the same treatment.
+        ZOOM = 4.0
+        elev_up   = _zoom(elev_grid,    ZOOM, order=3)
+        color_up  = _zoom(surface_color, ZOOM, order=1)
+
+        # Regenerate x/y coords from upsampled shape (stays in physical metres)
+        rows_up, cols_up = elev_up.shape
+        x_up = [c * res / ZOOM for c in range(cols_up)]
+        y_up = [r * res / ZOOM for r in range(rows_up)]
+
         fig = go.Figure(go.Surface(
-            z=elev_grid.tolist(),
-            x=x_m,
-            y=y_m,
-            surfacecolor=surface_color.tolist() if hasattr(surface_color, "tolist") else surface_color,
+            z=elev_up.tolist(),
+            x=x_up,
+            y=y_up,
+            surfacecolor=color_up.tolist(),
             colorscale=colorscale,
             colorbar=dict(title=color_label, thickness=14, len=0.55),
+            lighting=dict(roughness=0.9, specular=0.1, ambient=0.7),
             hovertemplate="X: %{x:.1f} m<br>Y: %{y:.1f} m<br>Elev: %{z:.2f} m<extra></extra>",
         ))
         fig.update_layout(
             **_chart_layout(),
             margin={"l": 0, "r": 0, "t": 32, "b": 0},
             scene=dict(
-                xaxis=dict(title="East (m)"),
-                yaxis=dict(title="North (m)"),
-                zaxis=dict(title="Elevation (m)"),
+                xaxis=dict(
+                    title="East (m)",
+                    showbackground=False, showgrid=False,
+                    zeroline=False, showticklabels=False,
+                ),
+                yaxis=dict(
+                    title="North (m)",
+                    showbackground=False, showgrid=False,
+                    zeroline=False, showticklabels=False,
+                ),
+                zaxis=dict(
+                    title="Elevation (m)",
+                    showbackground=False, showgrid=False,
+                    zeroline=False, showticklabels=False,
+                ),
                 aspectmode="manual",
                 aspectratio=dict(x=1, y=1, z=0.2),
                 bgcolor="#F9F9F8",
             ),
             annotations=[{
-                "text": f"Day {day}  •  {selected_field or ''}",
+                "text": f"Day {day}  \u2022  {selected_field or ''}",
                 "x": 0.01, "y": 1.0, "xref": "paper", "yref": "paper",
                 "showarrow": False, "font": {"size": 11, "color": "#64748b"},
                 "xanchor": "left",
@@ -1718,6 +1757,30 @@ def create_dash_app(log_path: str):
         Output("viewport-iframe", "id"),
         Input("day-scrubber", "value"),
         prevent_initial_call=True,
+    )
+
+    # ponytail: Collapsible sidebars minimal clientside callback
+    app.clientside_callback(
+        """
+        function(l_clicks, r_clicks) {
+            var l_open = (l_clicks % 2 === 0);
+            var r_open = (r_clicks % 2 === 0);
+            
+            var l_w = l_open ? "280px" : "0px";
+            var r_w = r_open ? "380px" : "0px";
+            
+            var l_style = l_open ? {transition: "opacity 0.2s"} : {opacity: 0, pointerEvents: "none", overflow: "hidden", transition: "opacity 0.2s"};
+            var r_style = r_open ? {transition: "opacity 0.2s"} : {opacity: 0, pointerEvents: "none", overflow: "hidden", transition: "opacity 0.2s"};
+            
+            return [{"gridTemplateColumns": l_w + " 1fr " + r_w}, l_style, r_style];
+        }
+        """,
+        Output("cf-shell", "style"),
+        Output("cf-sidebar", "style"),
+        Output("cf-right", "style"),
+        Input("toggle-left-btn", "n_clicks"),
+        Input("toggle-right-btn", "n_clicks"),
+        prevent_initial_call=False,
     )
 
     # ------------------------------------------------------------------

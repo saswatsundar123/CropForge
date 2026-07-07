@@ -70,6 +70,8 @@ PLANT_SCHEMA = pa.schema([
     pa.field("stress_index",        pa.float32()),
     pa.field("alive",               pa.bool_()),
     pa.field("phenological_stage",  pa.string()),
+    pa.field("model_id",            pa.string()),   # v0.9.0: GLTF URI or "" for cylinder fallback
+    pa.field("stage_progress",      pa.float32()),  # v0.9.0 Phase 2: progress in current stage [0,1]
     pa.field("custom_json",         pa.string()),
 ])
 
@@ -193,6 +195,8 @@ class StateLogger:
                 "stress_index":       plant.stress_index,
                 "alive":              plant.alive,
                 "phenological_stage": plant.phenological_stage,
+                "model_id":           plant.model_id,
+                "stage_progress":     float(plant.stage_progress),
                 "custom_json":        json.dumps(plant.custom),
             })
 

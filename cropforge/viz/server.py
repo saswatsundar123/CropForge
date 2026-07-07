@@ -60,6 +60,7 @@ def create_fastapi_app(
     log_path: str,
     cropforge_version: str,
     plants_df=None,
+    quality: str = "standard",
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -73,12 +74,18 @@ def create_fastapi_app(
         CropForge version string.
     plants_df:
         Full plants DataFrame — used to build FIELD_REGISTRY.
+    quality:
+        ``"standard"`` or ``"enhanced"`` — injected into every BufferStore.meta
+        so the JS frontend can read ``meta.quality_mode`` from /api/buffer/meta.
     """
     from cropforge.viz.buffers import FIELD_REGISTRY
 
     # ---- Pre-build per-field binary frames at startup ------------------
     if plants_df is not None and not plants_df.empty:
         FIELD_REGISTRY.build_all(plants_df, variable="biomass_g")
+        # Inject quality_mode into every store's meta so JS can read it
+        for store in FIELD_REGISTRY._stores.values():
+            store._meta["quality_mode"] = quality
     else:
         logger.warning("No plants data available — FIELD_REGISTRY will be empty.")
 
@@ -296,7 +303,7 @@ def create_fastapi_app(
 # Boot function (called by farm.visualize())
 # ---------------------------------------------------------------------------
 
-def boot(log_path: str, cropforge_version: str = "0.1.0") -> None:
+def boot(log_path: str, cropforge_version: str = "0.1.0", quality: str = "standard") -> None:
     """Start the dashboard server and open the default browser.
 
     Blocks until the user presses Ctrl-C (PRD Section 7.1).
@@ -314,6 +321,7 @@ def boot(log_path: str, cropforge_version: str = "0.1.0") -> None:
         log_path=log_path,
         cropforge_version=cropforge_version,
         plants_df=_DATA.get("plants"),
+        quality=quality,
     )
 
     # Configure uvicorn

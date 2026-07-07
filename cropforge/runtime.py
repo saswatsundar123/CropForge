@@ -306,6 +306,40 @@ def _fire_events(
     return fired
 
 
+# Stage name → integer index (PRD v0.9.0 §7.3)
+_STAGE_INDEX: dict[str, int] = {
+    "germination":    0,
+    "emergence":      1,
+    "vegetative":     2,
+    "tillering":      3,
+    "stem_extension": 3,
+    "anthesis":       4,
+    "grain_fill":     5,
+    "senescence":     6,
+}
+
+
+def _assign_model_ids(state: Any) -> None:
+    """Stamp model_id on each plant using AssetRegistry (PRD v0.9.0 §8).
+
+    Reads plant.custom['crop_name'] (set by plugins) or falls back to
+    plant.custom.get('species'). If neither is set or no model is registered,
+    model_id stays "" (cylinder fallback — no visual regression).
+    """
+    try:
+        from cropforge.viz.registry import AssetRegistry
+    except ImportError:
+        return  # registry module missing — no-op, all plants keep model_id=""
+
+    for plant in state.plants:
+        crop = plant.custom.get("crop_name") or plant.custom.get("species", "")
+        if not crop:
+            continue
+        stage_idx = _STAGE_INDEX.get(plant.phenological_stage, 0)
+        uri = AssetRegistry.get_model_path(crop, stage_idx)
+        plant.model_id = uri if uri is not None else ""
+
+
 # ---------------------------------------------------------------------------
 # Core execution loop (PRD Section 6.4)
 # ---------------------------------------------------------------------------
@@ -464,6 +498,11 @@ def _execute_run(farm: "Farm", days: int) -> None:
                 state.events_fired = _fire_events(farm, field, day, env)
                 # Re-fetch state -- a custom event may have replaced the object.
                 state = field._field_state
+
+                # 5b. Stamp model_id on each plant from AssetRegistry (PRD v0.9.0 §8).
+                #     Runs after all steps so phenological_stage is final for this day.
+                #     ponytail: lazy import + inline STAGE_INDEX keeps registry optional.
+                _assign_model_ids(state)
 
                 # 6. Record completed timestep to Parquet logger
                 state_log.record(field, state, env)

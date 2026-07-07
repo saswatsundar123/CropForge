@@ -15,6 +15,47 @@ pip install cropforge
 
 ---
 
+## What's New in v0.9.0 — Photorealistic PBR Rendering & GLTF Export
+
+v0.9.0 closes the visual arc: the simulation now renders with photorealistic PBR materials, exports full 3D scenes as industry-standard `.glb` files, and resolves plants to registered GLTF stage models.
+
+### Photorealistic PBR Rendering
+
+```python
+farm.run(days=90)
+farm.visualize(quality="enhanced")   # MeshStandardMaterial, shadows, sun-angle light
+farm.visualize()                     # quality="standard" — identical to v0.8.0
+```
+
+### Plant Stage Architecture & Model Registry
+
+```python
+from cropforge.models import ModelRegistry
+
+ModelRegistry.register(
+    species="Triticum aestivum",
+    stage="heading",
+    gltf_path="models/wheat_heading.glb",
+)
+# Cylinder fallback automatic if no model registered
+```
+
+### GLTF Scene Export — Blender / Unreal Engine Ready
+
+```python
+farm.run(days=90)
+farm.export_scene(day=45, filepath="output/farm_day45.glb")
+# pip install cropforge[export]  required
+```
+
+The dashboard also provides a one-click **⬇ Export 3D Scene (.glb)** button.
+
+### High-Resolution Plotly Terrain
+
+The 3D terrain panel now applies 4× bicubic upsampling (`scipy.ndimage.zoom`) before display. Physics data is never modified — this is a pure UI enhancement.
+
+---
+
 ## What's New in v0.8.0 — Terrain Arc Completion
 
 v0.8.0 closes the terrain arc begun in v0.6.0: the simulation engine now operates at arbitrary sub-metre spatial resolution, sediment moves physically across the landscape, and the 3D renderer stays performant at field scales.
@@ -93,7 +134,8 @@ farm.run(days=90)
 farm.visualize()
 ```
 
-See `examples/conservation_ag_trial.py` and `examples/submetre_performance_trial.py` for complete v0.8.0 examples.
+See `examples/photorealistic_twin_trial.py` for the complete v0.9.0 capstone example.
+See `examples/conservation_ag_trial.py` and `examples/submetre_performance_trial.py` for v0.8.0 examples.
 
 ---
 

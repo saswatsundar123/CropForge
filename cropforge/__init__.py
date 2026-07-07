@@ -11,7 +11,7 @@ Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, Event, ...`
 from cropforge.crop import Crop
@@ -37,7 +37,10 @@ from cropforge.land_prep import (
     ConventionalTill,
     TiedRidges,
     VegetativeFilterStrip,
+    Mulching,
+    BroadBedFurrow,
 )
+from cropforge.viz.registry import AssetRegistry
 
 __all__ = [
     "Farm",
@@ -66,5 +69,8 @@ __all__ = [
     "ConventionalTill",
     "TiedRidges",
     "VegetativeFilterStrip",
+    "Mulching",
+    "BroadBedFurrow",
+    "AssetRegistry",
     "__version__",
 ]

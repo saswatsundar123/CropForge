@@ -8,7 +8,41 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-08
+
+### Added
+
+- **Model Registry** — `cropforge.models.ModelRegistry` maps `(species, stage)` pairs to GLTF file paths. Three.js viewport routes each plant to the correct `InstancedMesh` based on its current phenological stage. Cylinder fallback is always active — no model installed → no error.
+- **Binary buffer expansion** — Float32Array payload grows from 9 → 11 floats/plant, adding `stage_index` (int, remapped to float) and `lai_scale` (0.0–1.0). The `/api/buffer` endpoint is unchanged; third-party consumers must update to 11 floats/plant.
+- **Stage progress tracking** — `PlantState` gains `stage_progress` (0.0–1.0, fraction through current phenological stage). Updated live by `StandardWheat` and `StandardMaize` plugins from accumulated thermal time.
+- **PBR rendering** — `farm.visualize(quality="enhanced")` activates `MeshStandardMaterial` on terrain (roughness 0.9) and plants (roughness 0.6), shadow casting from a sun-angle directional light, and SSAO. `quality="standard"` (default) is bit-identical to v0.8.0.
+- **Per-stage InstancedMesh routing** — Three.js maintains a dict of `InstancedMesh`es keyed by `model_index`. Each day, plants are dispatched to the correct mesh; registered GLTF models replace the cylinder for that stage.
+- **GLTF scene export (Python)** — `farm.export_scene(day, filepath, field)` writes a valid binary GLB containing the simulation terrain and alive plant geometry (coloured boxes). Requires `pip install cropforge[export]` (`pygltflib>=1.16`).
+- **GLTF scene export (frontend)** — "⬇ Export 3D Scene (.glb)" button in the dashboard topbar. Uses Three.js `GLTFExporter` to capture the live scene and trigger a browser download.
+- **Plotly terrain 4× upsampling** — The `go.Surface` terrain chart applies `scipy.ndimage.zoom(order=3)` to elevation and `zoom(order=1)` to the colour overlay before display. Physics data is never modified. `z` and `surfacecolor` are guaranteed to match shape.
+- **PBR terrain lighting in Plotly** — `go.Surface` now uses `lighting=dict(roughness=0.9, specular=0.1, ambient=0.7)` for matte-soil aesthetics. Axis grid lines, tick labels, and backgrounds are hidden for a clean digital-twin look.
+- **Collapsible sidebars** — "◀ L" and "R ▶" toggle buttons in the topbar collapse left/right sidebar panels to give the 3D viewport the full screen.
+- **`Mulching` land prep** — Cover fraction, evaporation reduction, C-factor modification.
+- **`BroadBedFurrow` land prep** — BBF geometry with P factor = 0.45.
+- **`terrain_feedback` flag** — `@farm.use_physics(terrain_feedback=True/False)` controls whether the elevation grid updates daily from net sediment flux.
+- **New docs** — `docs/features/visual_engine.md`, `docs/tutorials/3d_assets_and_export.md`.
+- **Capstone example** — `examples/photorealistic_twin_trial.py` demonstrates the full v0.9.0 feature stack end-to-end.
+
+### Changed
+
+- Binary buffer: 9 → 11 floats/plant (`stage_index`, `lai_scale` appended). Backward-incompatible for third-party binary consumers.
+
+### Tested
+
+- **838 tests passing**, 1 skipped, 0 failures. Zero regressions.
+- Shape-match guarantee verified: `test_upsample_shapes_match_10x10` asserts `z.shape == surfacecolor.shape == (40, 40)`.
+- GLB export verified: `test_export_scene_glb_header` reads first 4 bytes and asserts `b"glTF"`.
+- Cylinder fallback verified: all 798 pre-v0.9.0 tests still pass with no models installed.
+
+---
+
 ## [0.8.0] - 2026-07-05
+
 
 ### Added
 

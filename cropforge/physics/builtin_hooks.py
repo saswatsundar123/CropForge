@@ -1240,6 +1240,7 @@ def make_erosion_hook() -> object:
 def make_sediment_hook(
     k_erodibility: float = 0.005,
     k_transport: float = 0.02,
+    terrain_feedback: bool = True,
 ) -> object:
     """Return a step function that routes detached soil via D8 each day.
 
@@ -1355,8 +1356,10 @@ def make_sediment_hook(
                 delta_m = (deposit_grid[r][c] - eroded_grid[r][c]) / 1000.0  # mm → m
                 state.elevation_grid[r, c] += delta_m
 
-        # Recompute slope from updated DEM; stored in state.custom for next day's erosion hook
-        state.custom["slope_grid"] = _compute_slope_normalized(state.elevation_grid)
+        # Recompute slope from updated DEM; stored in state.custom for next day's erosion hook.
+        # terrain_feedback=False freezes terrain geometry after init (PRD v0.9.0 §4.3).
+        if terrain_feedback:
+            state.custom["slope_grid"] = _compute_slope_normalized(state.elevation_grid)
 
         # ---- Step 6: Accumulate season grids for observability ----
         for key, grid in (

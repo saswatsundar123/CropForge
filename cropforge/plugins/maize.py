@@ -51,6 +51,16 @@ def _get_stage(thermal_time: float) -> str:
     return stage
 
 
+def _get_stage_progress(thermal_time: float, stage: str) -> float:
+    """Fractional progress within *stage* [0.0, 1.0] — ponytail: same pattern as wheat."""
+    idx = _STAGE_ORDER.index(stage)
+    start_tt = _STAGE_TT[stage]
+    end_tt = _STAGE_TT[_STAGE_ORDER[idx + 1]] if idx + 1 < len(_STAGE_ORDER) else start_tt + 400.0
+    if end_tt <= start_tt:
+        return 1.0
+    return min(1.0, max(0.0, (thermal_time - start_tt) / (end_tt - start_tt)))
+
+
 @register_crop("maize")
 class StandardMaize(CropPlugin):
     """CERES-Maize inspired crop plugin for CropForge.
@@ -143,6 +153,7 @@ class StandardMaize(CropPlugin):
         stage = _get_stage(plant.custom["thermal_time"])
         plant.custom["phenological_stage"] = stage
         plant.phenological_stage = stage
+        plant.stage_progress = _get_stage_progress(plant.custom["thermal_time"], stage)
 
     def _update_lai(self, plant, env) -> None:
         stage = plant.custom.get("phenological_stage", "germination")

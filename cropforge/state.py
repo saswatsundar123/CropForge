@@ -62,6 +62,12 @@ class PlantState:
     stress_index: float = 0.0
     alive: bool = True
     phenological_stage: str = "germination"
+    # v0.9.0 -- GLTF model URI assigned daily by AssetRegistry lookup.
+    # Empty string = no model registered → cylinder fallback in renderer.
+    model_id: str = ""
+    # v0.9.0 Phase 2 — progress within current phenological stage [0.0, 1.0].
+    # 0.0 = just entered stage, 1.0 = stage threshold reached (about to transition).
+    stage_progress: float = 0.0
 
     # v0.2.0 -- root impedance multiplier (PRD v0.2.0 Section 5.3)
     # 1.0 = unrestricted, 0.0 = hard pan block.

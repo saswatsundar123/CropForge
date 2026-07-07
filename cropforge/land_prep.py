@@ -32,6 +32,14 @@ import numpy as np
 # Base class
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# 3-tuple compatibility shim (PRD v0.9.0 §4.4)
+# ---------------------------------------------------------------------------
+# Wrap abstract apply() so old 2-tuple subclasses continue working unchanged.
+# Farm calls _apply_compat() instead of apply() directly.
+# ponytail: wrapper on base avoids touching every subclass.
+
 class LandPrep(ABC):
     """Abstract base for land preparation geometric modifiers (PRD v0.6.0 §6).
 
@@ -68,6 +76,17 @@ class LandPrep(ABC):
             ``"surface_roughness_index"``.
             Return an empty dict if no soil property changes are needed.
         """
+
+    def _apply_compat(
+        self,
+        elevation_grid: np.ndarray,
+        resolution_m: float,
+    ) -> tuple[np.ndarray, dict, dict]:
+        """Call apply() and normalise to 3-tuple for farm internals."""
+        result = self.apply(elevation_grid, resolution_m)
+        if len(result) == 2:
+            return result[0], result[1], {}  # ponytail: old subclasses just work
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -406,3 +425,118 @@ class VegetativeFilterStrip(LandPrep):
         # No global soil changes; no elevation change (vegetation doesn't reshape ground)
         return elevation_grid.copy(), {}, per_cell
 
+
+# ---------------------------------------------------------------------------
+# v0.8.0 carry-overs (PRD v0.9.0 §4.1 / §4.2)
+# ---------------------------------------------------------------------------
+
+class Mulching(LandPrep):
+    """Surface mulch modifier — no elevation change, soil-modifier only.
+
+    Physical effects (PRD v0.9.0 §4.1):
+    - Soil evaporation reduced: ``E_soil = E_potential × (1 - cover_fraction × 0.65)``
+    - Clod breakdown slowed: ``clod_breakdown_rate × (1 - cover_fraction × 0.7)``
+    - C-factor in erosion engine: ``C_base × (1 - cover_fraction × 0.8)``
+
+    Parameters
+    ----------
+    cover_fraction:
+        Fraction of soil surface covered by mulch (0.0 = bare, 1.0 = fully covered).
+    mulch_type:
+        ``"straw"``, ``"plastic"``, or ``"compost"`` — affects visual overlay only.
+    thickness_cm:
+        Mulch layer thickness in centimetres.
+    """
+
+    def __init__(
+        self,
+        cover_fraction: float = 0.7,
+        mulch_type: str = "straw",
+        thickness_cm: float = 5.0,
+    ) -> None:
+        if not 0.0 <= cover_fraction <= 1.0:
+            raise ValueError("cover_fraction must be between 0.0 and 1.0.")
+        if mulch_type not in ("straw", "plastic", "compost"):
+            raise ValueError("mulch_type must be 'straw', 'plastic', or 'compost'.")
+        if thickness_cm <= 0:
+            raise ValueError("thickness_cm must be positive.")
+        self.cover_fraction = cover_fraction
+        self.mulch_type = mulch_type
+        self.thickness_cm = thickness_cm
+
+    def apply(self, elevation_grid: np.ndarray, resolution_m: float) -> tuple[np.ndarray, dict]:
+        # No elevation change — mulch sits on top without reshaping the DEM.
+        soil_mods = {
+            # Fraction passed to hydrology/erosion hooks; they read this key.
+            "mulch_cover_fraction": self.cover_fraction,
+            "mulch_type": self.mulch_type,
+        }
+        return elevation_grid.copy(), soil_mods
+
+
+class BroadBedFurrow(LandPrep):
+    """Broad-bed furrow (BBF) system — wide raised beds with narrow drainage furrows.
+
+    Standard in Vertisol cropping systems (ICRISAT). Deeper, narrower furrows
+    than ``RidgeFurrow``; higher drainage capacity on heavy-clay soils.
+
+    P-factor in erosion engine = 0.45 (PRD v0.9.0 §4.2).
+
+    Parameters
+    ----------
+    bed_width_m:
+        Width of each raised bed in metres.
+    bed_height_cm:
+        Height of bed above furrow floor (centimetres).
+    furrow_width_m:
+        Width of drainage furrow in metres.
+    furrow_depth_cm:
+        Depth of furrow below unmodified ground level (centimetres).
+    cross_slope:
+        If True, beds run across the slope for drainage control.
+    """
+
+    def __init__(
+        self,
+        bed_width_m: float = 1.5,
+        bed_height_cm: float = 15.0,
+        furrow_width_m: float = 0.5,
+        furrow_depth_cm: float = 20.0,
+        cross_slope: bool = True,
+    ) -> None:
+        if bed_width_m <= 0:
+            raise ValueError("bed_width_m must be positive.")
+        if furrow_width_m <= 0:
+            raise ValueError("furrow_width_m must be positive.")
+        self.bed_width_m = bed_width_m
+        self.bed_height_cm = bed_height_cm
+        self.furrow_width_m = furrow_width_m
+        self.furrow_depth_cm = furrow_depth_cm
+        self.cross_slope = cross_slope
+
+    def apply(self, elevation_grid: np.ndarray, resolution_m: float) -> tuple[np.ndarray, dict]:
+        modified = elevation_grid.copy()
+        rows, cols = modified.shape
+
+        bed_h_m = self.bed_height_cm / 100.0
+        furrow_d_m = self.furrow_depth_cm / 100.0
+        cycle_m = self.bed_width_m + self.furrow_width_m
+        bed_cells = max(1, round(self.bed_width_m / resolution_m))
+        furrow_cells = max(1, round(self.furrow_width_m / resolution_m))
+        cycle_cells = bed_cells + furrow_cells
+
+        # BBF runs across columns (like RidgeFurrow)
+        for c in range(cols):
+            pos_in_cycle = c % cycle_cells
+            if pos_in_cycle < bed_cells:
+                modified[:, c] += bed_h_m          # raised bed
+            else:
+                modified[:, c] -= furrow_d_m        # drainage furrow
+
+        soil_mods = {
+            "porosity_delta": 0.03,
+            "bulk_density_delta": -0.06,
+            "surface_roughness_index": 0.4,
+            "p_factor": 0.45,  # RUSLE P-factor for BBF (PRD v0.9.0 §4.2)
+        }
+        return modified, soil_mods
