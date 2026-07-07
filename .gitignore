@@ -20,3 +20,4 @@ Thumbs.db
 site/
 internal_dev/
 .claude
+.agents/
