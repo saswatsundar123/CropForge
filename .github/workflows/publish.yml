@@ -36,6 +36,10 @@ jobs:
       - name: Run tests
         run: pytest tests/ -q --tb=short
 
+      - name: CI Badges
+        uses: GaelGirodon/ci-badges-action@v1.10.0
+        if: always()
+
   # -------------------------------------------------------------------------
   # Build distribution
   # -------------------------------------------------------------------------

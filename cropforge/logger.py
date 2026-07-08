@@ -72,6 +72,7 @@ PLANT_SCHEMA = pa.schema([
     pa.field("phenological_stage",  pa.string()),
     pa.field("model_id",            pa.string()),   # v0.9.0: GLTF URI or "" for cylinder fallback
     pa.field("stage_progress",      pa.float32()),  # v0.9.0 Phase 2: progress in current stage [0,1]
+    pa.field("disease_severity",    pa.float32()),  # v0.9.5 Phase 3: disease shader severity [0,1]
     pa.field("custom_json",         pa.string()),
 ])
 
@@ -109,6 +110,14 @@ ENV_SCHEMA = pa.schema([
     pa.field("co2_ppm",         pa.float32()),
     pa.field("events_fired",    pa.string()),   # JSON array of strings
     pa.field("custom_json",     pa.string()),
+])
+
+MACHINERY_SCHEMA = pa.schema([
+    pa.field("day",            pa.int32()),
+    pa.field("field_name",     pa.string()),
+    pa.field("event_name",     pa.string()),
+    pa.field("machine_type",   pa.string()),
+    pa.field("path_json",      pa.string()),
 ])
 
 
@@ -155,6 +164,7 @@ class StateLogger:
         self._plant_rows:   List[Dict[str, Any]] = []
         self._soil_rows:    List[Dict[str, Any]] = []
         self._env_rows:     List[Dict[str, Any]] = []
+        self._machinery_rows: List[Dict[str, Any]] = []
 
         # Track whether anything has been written yet (for partial flush logic)
         self._flushed_days: int = 0
@@ -197,6 +207,7 @@ class StateLogger:
                 "phenological_stage": plant.phenological_stage,
                 "model_id":           plant.model_id,
                 "stage_progress":     float(plant.stage_progress),
+                "disease_severity":   float(plant.disease_severity),
                 "custom_json":        json.dumps(plant.custom),
             })
 
@@ -250,6 +261,17 @@ class StateLogger:
             "custom_json":     json.dumps(env.custom),
         })
 
+        for item in state.custom.get("machinery_events", []):
+            if int(item.get("day", day)) != day:
+                continue
+            self._machinery_rows.append({
+                "day":          day,
+                "field_name":   field_name,
+                "event_name":   str(item.get("event_name", "machinery")),
+                "machine_type": str(item.get("machine_type", "machine")),
+                "path_json":    json.dumps(item.get("path", [])),
+            })
+
     # ------------------------------------------------------------------
     # Write to Parquet
     # ------------------------------------------------------------------
@@ -297,13 +319,21 @@ class StateLogger:
             subdir="environment",
             file_meta=file_meta,
         )
+        self._write_table(
+            rows=self._machinery_rows,
+            schema=MACHINERY_SCHEMA,
+            subdir="machinery",
+            file_meta=file_meta,
+        )
 
         self._flushed_days = len(set(r["day"] for r in self._env_rows))
         logger.info(
-            "StateLogger flushed %d plant-rows, %d soil-rows, %d env-rows -> %s",
+            "StateLogger flushed %d plant-rows, %d soil-rows, %d env-rows, "
+            "%d machinery-rows -> %s",
             len(self._plant_rows),
             len(self._soil_rows),
             len(self._env_rows),
+            len(self._machinery_rows),
             self.output_dir,
         )
 
@@ -372,5 +402,6 @@ class StateLogger:
             f"StateLogger(session={self.session_name!r}, "
             f"plant_rows={len(self._plant_rows)}, "
             f"soil_rows={len(self._soil_rows)}, "
-            f"env_rows={len(self._env_rows)})"
+            f"env_rows={len(self._env_rows)}, "
+            f"machinery_rows={len(self._machinery_rows)})"
         )

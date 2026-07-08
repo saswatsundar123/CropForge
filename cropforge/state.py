@@ -68,6 +68,9 @@ class PlantState:
     # v0.9.0 Phase 2 — progress within current phenological stage [0.0, 1.0].
     # 0.0 = just entered stage, 1.0 = stage threshold reached (about to transition).
     stage_progress: float = 0.0
+    # v0.9.5 Phase 3 -- disease visual severity [0.0, 1.0].
+    # Mirrors the v0.5 disease engine's progressive disease_stress value.
+    disease_severity: float = 0.0
 
     # v0.2.0 -- root impedance multiplier (PRD v0.2.0 Section 5.3)
     # 1.0 = unrestricted, 0.0 = hard pan block.

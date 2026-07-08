@@ -2,7 +2,7 @@
 
 > **v0.8.0** — How CropForge models erosion, sediment transport, and terrain feedback together.
 
-The full runnable script is at [`examples/geomorphology_tutorial.py`](../../examples/geomorphology_tutorial.py).
+The full runnable script is at `examples/geomorphology_tutorial.py`.
 
 ---
 
@@ -91,6 +91,6 @@ The tie-dams intercept D8 flow paths and create micro-deposition zones inside fu
 
 ## See also
 
-- [`examples/conservation_ag_trial.py`](../../examples/conservation_ag_trial.py) — 60-day dual-field comparison with full physics
-- [`examples/submetre_performance_trial.py`](../../examples/submetre_performance_trial.py) — 500×500 LOD rendering stress test
+- `examples/conservation_ag_trial.py` — 60-day dual-field comparison with full physics
+- `examples/submetre_performance_trial.py` — 500×500 LOD rendering stress test
 - [API Reference — Sediment Transport](../reference/api.md#erosion--sediment-transport-cropforgephysicssoilpy)

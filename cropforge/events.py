@@ -278,6 +278,96 @@ class _FertiliserEvent(_BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# Machinery path events
+# ---------------------------------------------------------------------------
+
+def _boustrophedon_path(field_state: "FieldState") -> list[list[float]]:
+    """Return a simple row-by-row machinery path inside field bounds."""
+    rows = len(field_state.soil)
+    cols = len(field_state.soil[0]) if rows else 0
+    if rows <= 0 or cols <= 0:
+        return []
+
+    path: list[list[float]] = []
+    max_col = max(0, cols - 1)
+    for row in range(rows):
+        if row % 2 == 0:
+            path.append([0.0, float(row)])
+            path.append([float(max_col), float(row)])
+        else:
+            path.append([float(max_col), float(row)])
+            path.append([0.0, float(row)])
+    return path
+
+
+class _MachineryPathEvent(_BaseEvent):
+    """Base class for visual machinery events that log frontend paths."""
+
+    name = "machinery"
+    machine_type = "machine"
+
+    def __init__(self, field: str, day: int) -> None:
+        self.field = field
+        self.fire_day = day
+
+    def validate(self) -> None:
+        if self.fire_day < 1:
+            raise CropForgeEventError(
+                f"{self.__class__.__name__}(field={self.field!r}) has day="
+                f"{self.fire_day}. day must be >= 1."
+            )
+
+    def should_fire(self, field_name: str, day: int) -> bool:
+        return field_name == self.field and day == self.fire_day
+
+    def apply(
+        self,
+        field_state: "FieldState",
+        env_state: "EnvironmentState",
+        day: int,
+    ) -> None:
+        path = _boustrophedon_path(field_state)
+        event = {
+            "day": day,
+            "field_name": self.field,
+            "event_name": self.name,
+            "machine_type": self.machine_type,
+            "path": path,
+        }
+        field_state.custom.setdefault("machinery_events", []).append(event)
+        logger.debug(
+            "%s: day=%d field=%r machine=%s waypoints=%d",
+            self.__class__.__name__, day, self.field, self.machine_type, len(path),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(field={self.field!r}, day={self.fire_day}, "
+            f"machine_type={self.machine_type!r})"
+        )
+
+
+class _TillageEvent(_MachineryPathEvent):
+    name = "tillage"
+    machine_type = "tractor"
+
+
+class _HarvestEvent(_MachineryPathEvent):
+    name = "harvest"
+    machine_type = "harvester"
+
+
+class _SprayEvent(_MachineryPathEvent):
+    name = "spray"
+    machine_type = "sprayer"
+
+
+TillageEvent = _TillageEvent
+HarvestEvent = _HarvestEvent
+SprayEvent = _SprayEvent
+
+
+# ---------------------------------------------------------------------------
 # CustomEvent
 # ---------------------------------------------------------------------------
 
@@ -458,6 +548,21 @@ class Event:
             n_kg_ha=n_kg_ha,
             apply_to_layer=apply_to_layer,
         )
+
+    @staticmethod
+    def tillage(field: str, day: int) -> _TillageEvent:
+        """Create a tillage machinery pass logged for frontend animation."""
+        return _TillageEvent(field=field, day=day)
+
+    @staticmethod
+    def harvest(field: str, day: int) -> _HarvestEvent:
+        """Create a harvest machinery pass logged for frontend animation."""
+        return _HarvestEvent(field=field, day=day)
+
+    @staticmethod
+    def spray(field: str, day: int) -> _SprayEvent:
+        """Create a spray machinery pass logged for frontend animation."""
+        return _SprayEvent(field=field, day=day)
 
     @staticmethod
     def custom(field: str, day: int) -> _CustomEvent:

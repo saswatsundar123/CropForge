@@ -1600,6 +1600,37 @@ class Farm:
         return _export(log_path=str(resolved_log), day=day, filepath=filepath, field=field)
 
 
+    def export_animation(
+        self,
+        days,
+        filepath: str = "season.glb",
+        field: Optional[str] = None,
+        fps: int = 4,
+    ) -> "Path":
+        """Export a multi-day simulation GLB.
+
+        This pre-v0.9.5 API writes a valid terrain-aware GLB for the first
+        requested keyframe. Full GLTF animation channels are planned in the
+        v0.9.5 exporter phase.
+        """
+        from pathlib import Path as _Path
+        from cropforge.runtime import CropForgeVisualizeError
+        from cropforge.export_gltf import export_animation as _export_animation
+
+        resolved_log = self._last_log_path
+        if not resolved_log or not _Path(resolved_log).exists():
+            raise CropForgeVisualizeError(
+                "No valid simulation log found. Run farm.run() before export_animation()."
+            )
+
+        return _export_animation(
+            log_path=str(resolved_log),
+            days=days,
+            filepath=filepath,
+            field=field,
+            fps=fps,
+        )
+
 
     def __repr__(self) -> str:
         return (

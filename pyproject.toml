@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cropforge"
-version = "0.9.0"
+version = "0.9.5"
 description = "Open-source, code-first virtual farm runtime for agricultural researchers."
 readme = "README.md"
 license = { text = "MIT" }
@@ -42,6 +42,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "plotly>=5.22",
     "dash>=2.17",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
@@ -73,10 +74,10 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 
 [tool.setuptools]
-packages = ["cropforge", "cropforge.physics", "cropforge.plugins"]
+packages = ["cropforge", "cropforge.physics", "cropforge.plugins", "cropforge.viz"]
 
 [tool.setuptools.package-data]
-"cropforge" = ["viz/static/*", "examples/data/*"]
+"cropforge" = ["viz/static/*", "viz/assets/**/*", "examples/data/*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["tests/*", "internal_dev/*", "docs/*"]

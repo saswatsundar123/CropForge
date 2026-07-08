@@ -40,6 +40,18 @@ def test_register_and_get():
     assert AssetRegistry.get_model_path("CropA", 4) == "assets/crop_a_anthesis.gltf"
 
 
+def test_register_documented_species_gltf_path_alias():
+    AssetRegistry.register(
+        species="Triticum aestivum",
+        stage=4,
+        gltf_path="assets/wheat_anthesis.gltf",
+    )
+    assert (
+        AssetRegistry.get_model_path(species="Triticum aestivum", stage=4)
+        == "assets/wheat_anthesis.gltf"
+    )
+
+
 def test_get_unregistered_returns_none():
     assert AssetRegistry.get_model_path("CropB", 4) is None
 

@@ -11,7 +11,7 @@ Maintainer : Saswat Sundar Rath, ICAR-IARI Jharkhand
 Licence    : MIT
 """
 
-__version__ = "0.9.0"
+__version__ = "0.9.5"
 
 # Core public API — matches `from cropforge import Farm, Field, Crop, Weather, Soil, Event, ...`
 from cropforge.crop import Crop
@@ -41,6 +41,7 @@ from cropforge.land_prep import (
     BroadBedFurrow,
 )
 from cropforge.viz.registry import AssetRegistry
+from cropforge.models import ModelRegistry  # compat alias (PRD v0.9.5 §2.3)
 
 __all__ = [
     "Farm",
@@ -72,5 +73,6 @@ __all__ = [
     "Mulching",
     "BroadBedFurrow",
     "AssetRegistry",
+    "ModelRegistry",
     "__version__",
 ]

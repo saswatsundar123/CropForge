@@ -174,8 +174,8 @@ def create_fastapi_app(
             Default is the first available field.
 
         Response Content-Type: application/octet-stream
-        Body: n_plants × 36 bytes (9 float32 per plant)
-              Layout: [x, y, z, height, radius, r, g, b, alive]
+        Body: n_plants x 56 bytes (14 float32 per plant)
+              Layout is described by /api/buffer/meta["buffer_fields"].
         """
         store = FIELD_REGISTRY.get(field)
         if store is None or not store.is_ready:
@@ -204,6 +204,68 @@ def create_fastapi_app(
                 "Cache-Control":    "no-cache",
             },
         )
+
+    @api.get("/api/buffer/day/{day}")
+    async def buffer_day_payload(
+        day: int,
+        field: Optional[str] = Query(None, description="Field name (default: first field)"),
+    ):
+        """Return JSON metadata for a day, including any machinery path."""
+        import json as _json
+        import pyarrow.parquet as _pq
+
+        store = FIELD_REGISTRY.get(field)
+        if store is None or not store.is_ready:
+            available = FIELD_REGISTRY.field_names
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Buffer store not ready for field '{field}'. "
+                    f"Available fields: {available}"
+                ),
+            )
+
+        precipitation_mm = 0.0
+        environment_dir = Path(log_path) / "environment"
+        if environment_dir.exists():
+            try:
+                env_df = _pq.read_table(str(environment_dir)).to_pandas()
+                if not env_df.empty:
+                    day_series = env_df["day"].astype(int)
+                    mask = (day_series == int(day)) & (env_df["field_name"] == store.field_name)
+                    if mask.any():
+                        rec = env_df[mask].iloc[0]
+                        precipitation_mm = float(rec.get("rainfall_mm", 0.0) or 0.0)
+            except Exception:
+                logger.exception("Failed to read weather metadata from %s", environment_dir)
+
+        machinery = []
+        machinery_dir = Path(log_path) / "machinery"
+        if machinery_dir.exists():
+            try:
+                df = _pq.read_table(str(machinery_dir)).to_pandas()
+                if not df.empty:
+                    day_series = df["day"].astype(int)
+                    mask = (day_series == int(day)) & (df["field_name"] == store.field_name)
+                    for rec in df[mask].to_dict("records"):
+                        try:
+                            path = _json.loads(rec.get("path_json", "[]"))
+                        except (TypeError, ValueError):
+                            path = []
+                        machinery.append({
+                            "event_name": rec.get("event_name", "machinery"),
+                            "machine_type": rec.get("machine_type", "machine"),
+                            "path": path,
+                        })
+            except Exception:
+                logger.exception("Failed to read machinery metadata from %s", machinery_dir)
+
+        return JSONResponse(content={
+            "day": day,
+            "field_name": store.field_name,
+            "precipitation_mm": precipitation_mm,
+            "machinery": machinery,
+        })
 
     @api.get("/api/buffer/rebuild")
     async def buffer_rebuild(

@@ -93,6 +93,42 @@ def test_export_scene_midday(tmp_path):
     assert result.stat().st_size > 0
 
 
+def test_export_scene_uses_logged_terrain_elevation(tmp_path):
+    """Exported terrain vertices must preserve the non-flat logged terrain."""
+    import numpy as np
+    import pygltflib
+
+    farm = _small_wheat_farm(tmp_path)
+    out = tmp_path / "terrain.glb"
+    farm.export_scene(day=5, filepath=str(out))
+
+    gltf = pygltflib.GLTF2().load_binary(str(out))
+    blob = gltf.binary_blob()
+    pos_accessor = gltf.accessors[0]
+    pos_view = gltf.bufferViews[pos_accessor.bufferView]
+    offset = (pos_view.byteOffset or 0) + (pos_accessor.byteOffset or 0)
+    terrain_positions = np.frombuffer(
+        blob,
+        dtype=np.float32,
+        count=25 * 3,
+        offset=offset,
+    ).reshape(25, 3)
+
+    assert not np.allclose(terrain_positions[:, 1], 0.0), (
+        "GLB terrain vertices are flat; expected logged terrain elevation"
+    )
+
+
+def test_export_animation_creates_glb(tmp_path):
+    """farm.export_animation() should exist and write a valid .glb."""
+    farm = _small_wheat_farm(tmp_path)
+    out = tmp_path / "season.glb"
+    result = farm.export_animation(days=range(1, 4), filepath=str(out), fps=4)
+    assert result.exists()
+    with open(out, "rb") as f:
+        assert f.read(4) == b"glTF"
+
+
 # ---------------------------------------------------------------------------
 # 3. Error paths
 # ---------------------------------------------------------------------------

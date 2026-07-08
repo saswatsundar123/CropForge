@@ -6,10 +6,10 @@ Crucible tests for Phase 2: Binary Buffer Expansion & Stage Animation.
 Verifies:
   - stage_progress on PlantState defaults to 0.0
   - wheat/maize _get_stage_progress maths
-  - BufferStore now packs 11 floats per plant
+  - BufferStore now packs 14 floats per plant
   - model_index_map present in BufferStore.meta
   - stage_progress values > 0.0 after thermal accumulation
-  - buffer length == n_plants * 11 * 4 bytes
+  - buffer length == n_plants * 14 * 4 bytes
 """
 from __future__ import annotations
 
@@ -59,17 +59,17 @@ def test_maize_stage_progress_vegetative():
 
 
 # ---------------------------------------------------------------------------
-# 3. BufferStore: 11 floats per plant
+# 3. BufferStore: 14 floats per plant
 # ---------------------------------------------------------------------------
 
 def test_buffer_floats_per_plant_constant():
     from cropforge.viz.buffers import FLOATS_PER_PLANT, BYTES_PER_PLANT
-    assert FLOATS_PER_PLANT == 11
-    assert BYTES_PER_PLANT == 44
+    assert FLOATS_PER_PLANT == 14
+    assert BYTES_PER_PLANT == 56
 
 
-def test_buffer_frame_length_is_11_floats():
-    """BufferStore.build() → n_plants * 11 * 4 bytes per frame."""
+def test_buffer_frame_length_is_14_floats():
+    """BufferStore.build() -> n_plants * 14 * 4 bytes per frame."""
     import pandas as pd
     from cropforge.viz.buffers import BufferStore
 
@@ -92,7 +92,7 @@ def test_buffer_frame_length_is_11_floats():
 
     frame = store.get_frame(1)
     assert frame is not None
-    assert len(frame) == n_plants * 11 * 4
+    assert len(frame) == n_plants * 14 * 4
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +114,9 @@ def test_buffer_meta_has_model_index_map_empty():
     store.build(df)
     assert "model_index_map" in store.meta
     assert store.meta["model_index_map"] == {}
+    assert store.meta["buffer_fields"][11] == "morph_weight"
+    assert store.meta["buffer_fields"][12] == "stress_ks"
+    assert store.meta["buffer_fields"][13] == "disease_severity"
 
 
 def test_buffer_meta_model_index_map_populated():
@@ -154,9 +157,12 @@ def test_buffer_model_index_zero_for_cylinder_fallback():
     store.build(df)
 
     frame = store.get_frame(1)
-    floats = struct.unpack(f"{11}f", frame)
+    floats = struct.unpack(f"{14}f", frame)
     assert floats[9] == pytest.approx(0.0)   # model_index = 0 (cylinder)
     assert floats[10] == pytest.approx(0.25)  # stage_progress packed
+    assert floats[11] == pytest.approx(0.25)  # morph_weight defaults to stage_progress
+    assert floats[12] == pytest.approx(1.0)   # no stress logged => unstressed
+    assert floats[13] == pytest.approx(0.0)   # no disease logged => healthy
 
 
 # ---------------------------------------------------------------------------
@@ -212,15 +218,15 @@ def test_crucible_wheat_30day_stage_progress_in_buffer():
     assert frame is not None, "Day 15 frame missing"
 
     n_plants = store.n_plants
-    assert len(frame) == n_plants * 11 * 4, (
-        f"Expected {n_plants * 11 * 4} bytes, got {len(frame)}"
+    assert len(frame) == n_plants * 14 * 4, (
+        f"Expected {n_plants * 14 * 4} bytes, got {len(frame)}"
     )
 
     # model_index_map in meta
     assert "model_index_map" in store.meta
 
     # Unpack all stage_progress values for day 15
-    floats_per = 11
+    floats_per = 14
     all_floats = struct.unpack(f"{n_plants * floats_per}f", frame)
     stage_progresses = [all_floats[i * floats_per + 10] for i in range(n_plants)]
 

@@ -10,7 +10,7 @@ PRD References:
     PRD v0.2.0   — Multi-field support: each field has its own buffer store,
                    served via ?field= query parameter.
 
-Binary frame layout (per plant, 11 × float32 = 44 bytes):
+Binary frame layout (per plant, 14 float32 = 56 bytes):
     [0]  x              — column index (grid position)
     [1]  y              — height_cm scaled to scene units (0.0 on dead plants)
     [2]  z              — row index (grid position)
@@ -22,9 +22,12 @@ Binary frame layout (per plant, 11 × float32 = 44 bytes):
     [8]  alive          — 1.0 = alive, 0.0 = dead (as float for buffer alignment)
     [9]  model_index    — integer key into model_index_map (0 = cylinder fallback)
     [10] stage_progress — fractional progress within current pheno stage [0.0, 1.0]
+    [11] morph_weight   — stage morph interpolation weight [0.0, 1.0]
+    [12] stress_ks      — water stress coefficient for wilt deformation [0.0, 1.0]
+    [13] disease_severity — disease necrosis shader severity [0.0, 1.0]
 
-Total buffer per day  = n_plants × 11 × 4 bytes
-Total buffer all days = n_days   × n_plants × 11 × 4 bytes
+Total buffer per day  = n_plants × 14 × 4 bytes
+Total buffer all days = n_days   × n_plants × 14 × 4 bytes
 
 Multi-field API (v0.2.0):
     FIELD_STORES[field_name] → BufferStore instance per field.
@@ -40,6 +43,7 @@ Licence: MIT
 from __future__ import annotations
 
 import colorsys
+import json
 import logging
 import struct
 from typing import Dict, List, Optional, Tuple
@@ -54,7 +58,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Floats per plant in the binary frame (see layout above)
-FLOATS_PER_PLANT = 11   # v0.9.0 Phase 2: +model_index [9], +stage_progress [10]
+BUFFER_FIELDS = [
+    "x",
+    "y",
+    "z",
+    "scale_y",
+    "radius",
+    "r",
+    "g",
+    "b",
+    "alive",
+    "model_index",
+    "stage_progress",
+    "morph_weight",
+    "stress_ks",
+    "disease_severity",
+]
+FLOATS_PER_PLANT = len(BUFFER_FIELDS)
 BYTES_PER_PLANT  = FLOATS_PER_PLANT * 4      # float32 = 4 bytes
 
 # PRD Section 7.3: dead plant colour = #8B6914 (dried brown)
@@ -80,6 +100,30 @@ _MIN_RADIUS = 0.05
 def _hsl_to_rgb(h: float, s: float, l: float) -> Tuple[float, float, float]:
     """Convert HSL (all in [0, 1]) to RGB (all in [0, 1])."""
     return colorsys.hls_to_rgb(h, l, s)
+
+
+def _clamp01(value: object, default: float = 0.0) -> float:
+    """Return *value* as a finite float clamped into [0, 1]."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = default
+    if not np.isfinite(v):
+        v = default
+    return max(0.0, min(1.0, v))
+
+
+def _parse_custom_json(value: object) -> dict:
+    """Parse logger ``custom_json`` defensively for optional viz fields."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _value_to_rgb(
@@ -223,6 +267,7 @@ class BufferStore:
             "vmax":              vmax,
             "bytes_per_plant":   BYTES_PER_PLANT,
             "floats_per_plant":  FLOATS_PER_PLANT,
+            "buffer_fields":     BUFFER_FIELDS,
             "grid_spacing":      _GRID_SPACING,
             "cm_to_world":       _CM_TO_WORLD,
             # v0.9.0 Phase 2: model_id → int index (0 = cylinder fallback)
@@ -301,12 +346,31 @@ class BufferStore:
                 view[base + 7] = b_c                        # B
                 view[base + 8] = 1.0 if alive else 0.0      # alive flag
                 # v0.9.0 Phase 2 — model_index and stage_progress
+                stage_progress = _clamp01(
+                    rec.get("stage_progress", 0.0) if rec is not None else 0.0
+                )
+                custom = _parse_custom_json(
+                    rec.get("custom_json", "") if rec is not None else ""
+                )
+                morph_weight = _clamp01(custom.get("morph_weight", stage_progress))
+                stress_ks = _clamp01(
+                    custom.get("water_stress_ks", custom.get("stress_ks", 1.0)),
+                    default=1.0,
+                )
+                disease_severity = _clamp01(
+                    rec.get(
+                        "disease_severity",
+                        custom.get("disease_stress", custom.get("disease_severity", 0.0)),
+                    ) if rec is not None else 0.0
+                )
+
                 view[base + 9]  = float(self._model_index_map.get(
                     rec.get("model_id", "") if rec is not None else "", 0
                 ))                                           # model_index (0=cylinder)
-                view[base + 10] = float(
-                    rec.get("stage_progress", 0.0) if rec is not None else 0.0
-                )                                            # stage_progress [0,1]
+                view[base + 10] = stage_progress             # stage_progress [0,1]
+                view[base + 11] = morph_weight               # morph_weight [0,1]
+                view[base + 12] = stress_ks                  # stress_ks [0,1]
+                view[base + 13] = disease_severity           # disease_severity [0,1]
                 idx += 1
 
         return bytes(buf)

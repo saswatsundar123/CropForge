@@ -1354,7 +1354,8 @@ def make_sediment_hook(
         for r in range(rows):
             for c in range(cols):
                 delta_m = (deposit_grid[r][c] - eroded_grid[r][c]) / 1000.0  # mm → m
-                state.elevation_grid[r, c] += delta_m
+                if terrain_feedback:
+                    state.elevation_grid[r, c] += delta_m
 
         # Recompute slope from updated DEM; stored in state.custom for next day's erosion hook.
         # terrain_feedback=False freezes terrain geometry after init (PRD v0.9.0 §4.3).

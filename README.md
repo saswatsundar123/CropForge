@@ -1,9 +1,13 @@
 # CropForge
 
+## What's New in v0.9.5 - Visual Architecture Complete
+
+v0.9.5 completes CropForge's visual architecture arc with First-Party Asset Bundles, Machinery Animation, Stress/Disease Visualizations, enhanced-mode rain particles, PBR rendering, morph targets, and terrain-aware GLB export.
+
 > Open-source, code-first virtual farm runtime for agricultural researchers.
 
 [![PyPI version](https://badge.fury.io/py/cropforge.svg)](https://badge.fury.io/py/cropforge)
-[![Tests](https://github.com/saswatsundar123/cropforge/actions/workflows/ci.yml/badge.svg)](https://github.com/saswatsundar123/cropforge/actions)
+[![Tests](https://github.com/saswatsundar123/cropforge/actions/workflows/publish.yml/badge.svg)](https://github.com/saswatsundar123/cropforge/actions)
 [![Docs](https://readthedocs.org/projects/cropforge/badge/?version=latest)](https://cropforge.readthedocs.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -34,7 +38,7 @@ from cropforge.models import ModelRegistry
 
 ModelRegistry.register(
     species="Triticum aestivum",
-    stage="heading",
+    stage=4,
     gltf_path="models/wheat_heading.glb",
 )
 # Cylinder fallback automatic if no model registered
@@ -134,7 +138,8 @@ farm.run(days=90)
 farm.visualize()
 ```
 
-See `examples/photorealistic_twin_trial.py` for the complete v0.9.0 capstone example.
+See `examples/digital_twin_full_lifecycle.py` for the complete v0.9.5 capstone example.
+See `examples/photorealistic_twin_trial.py` for the v0.9.0 visual export example.
 See `examples/conservation_ag_trial.py` and `examples/submetre_performance_trial.py` for v0.8.0 examples.
 
 ---

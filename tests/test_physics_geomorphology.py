@@ -66,7 +66,11 @@ def _furrow_elevation() -> np.ndarray:
     ])
 
 
-def _build_farm_with_furrow(days: int = 60, sediment: bool = True):
+def _build_farm_with_furrow(
+    days: int = 60,
+    sediment: bool = True,
+    terrain_feedback: bool = True,
+):
     """Return (farm, field) with furrow terrain and erosion+sediment physics."""
     elev = _furrow_elevation()
     rows, cols = elev.shape
@@ -78,7 +82,11 @@ def _build_farm_with_furrow(days: int = 60, sediment: bool = True):
 
     farm = Farm(name="GeomorphFarm", location=(23.0, 82.0))
     farm.add_field(field)
-    farm.use_physics(erosion=True, sediment_transport=sediment)
+    farm.use_physics(
+        erosion=True,
+        sediment_transport=sediment,
+        terrain_feedback=terrain_feedback,
+    )
     return farm, field
 
 
@@ -161,6 +169,22 @@ class TestBackwardCompat:
             field._field_state.elevation_grid, elev_before,
             err_msg="Elevation changed without sediment transport"
         )
+
+    def test_terrain_feedback_false_freezes_elevation(self):
+        """terrain_feedback=False computes sediment but leaves terrain geometry frozen."""
+        elev_before = _furrow_elevation()
+        farm, field = _build_farm_with_furrow(days=30, terrain_feedback=False)
+        farm.run(days=30)
+
+        np.testing.assert_array_equal(
+            field._field_state.elevation_grid,
+            elev_before,
+            err_msg="terrain_feedback=False must freeze elevation_grid",
+        )
+
+        cum_eroded = field._field_state.custom.get("cumulative_sediment_eroded_mm_grid")
+        assert cum_eroded is not None
+        assert max(max(row) for row in cum_eroded) > 0.0
 
 
 # ---------------------------------------------------------------------------

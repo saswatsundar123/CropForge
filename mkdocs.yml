@@ -48,6 +48,7 @@ nav:
     - Events: reference/events.md
   - Features:
     - Opt-In Physics: features/physics.md
+    - Visual Engine: features/visual_engine.md
   - Plugins:
     - Official Plugins: plugins.md
   - Tutorials:

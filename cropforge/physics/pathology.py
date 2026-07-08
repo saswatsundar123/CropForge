@@ -230,6 +230,7 @@ def calculate_disease_spread(
                     1.0,
                     plant.custom.get("disease_stress", 0.0) + stress_increment,
                 )
+                plant.disease_severity = plant.custom["disease_stress"]
                 # Accumulate stress_index
                 plant.stress_index = min(
                     1.0,
@@ -267,6 +268,7 @@ def calculate_disease_spread(
             neighbour.custom["disease_state"] = "I"
             neighbour.custom["days_infected"] = 0
             neighbour.custom["disease_stress"] = 0.0
+            neighbour.disease_severity = 0.0
 
     return plant_grid
 
@@ -296,3 +298,4 @@ def seed_initial_foci(
             plant.custom["disease_state"] = "I"
             plant.custom["days_infected"] = 0
             plant.custom["disease_stress"] = 0.0
+            plant.disease_severity = 0.0

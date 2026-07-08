@@ -12,7 +12,7 @@
  *   - Timeline scrubber driven by postMessage from Dash parent
  *   - Raycasting: click a plant → highlight + postMessage PLANT_CLICKED
  *
- * Binary frame layout (11 × float32 per plant, 44 bytes):
+ * Binary frame layout (14 float32 per plant, 56 bytes):
  *   [0]  x              grid col position (world units)
  *   [1]  y              half-height (cylinder centre above ground)
  *   [2]  z              grid row position (world units)
@@ -24,19 +24,27 @@
  *   [8]  alive          1.0 = alive, 0.0 = dead
  *   [9]  model_index    int key into meta.model_index_map (0 = cylinder fallback)
  *   [10] stage_progress fractional progress within current pheno stage [0.0, 1.0]
+ *   [11] morph_weight   stage morph interpolation weight [0.0, 1.0]
+ *   [12] stress_ks      water stress coefficient for wilt deformation [0.0, 1.0]
+ *   [13] disease_severity disease necrosis shader severity [0.0, 1.0]
  */
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 // ---------------------------------------------------------------------------
 // Globals
 // ---------------------------------------------------------------------------
 
 const API = window.location.origin;           // same origin as iframe parent
-const FLOATS = 11;                                // float32 values per plant (v0.9.0 Phase 2)
+const FLOATS = 14;                                // float32 values per plant (v0.9.5 Phase 3)
 const BYTES = FLOATS * 4;                        // bytes per plant
 
 let meta = null;   // buffer metadata from /api/buffer/meta
@@ -45,6 +53,7 @@ let terrainGrid = null;   // Float32Array [rows*cols] row-major elevation values
 let terrainRows = 0;
 let terrainCols = 0;
 let frames = {};     // {day: Float32Array}  — all preloaded frames
+let dayMeta = {};    // {day: {machinery: [...]}} lightweight JSON metadata
 let currentDay = 1;
 let currentField = null;   // active field name (null = server default)
 let playing = false;
@@ -55,7 +64,12 @@ let playTimer = null;
 let meshes = {};   // {model_index: THREE.InstancedMesh}
 let mesh = null;   // alias → meshes[0], cylinder fallback
 let soilMesh = null;
-let renderer, scene, camera, controls;
+let machineryMesh = null;
+let machineryAnim = null;
+let rainSystem = null;
+let rainPositions = null;
+let rainActiveCount = 0;
+let renderer, scene, camera, controls, composer;
 
 // ponytail: cache terrain elev constants once at init — not per frame, not per plant
 let _terrainEMin = 0.0;
@@ -135,6 +149,7 @@ async function bootstrap(fieldName) {
   setStatus(`Preloading ${meta.n_days} days × ${meta.n_plants} plants…`, 5);
 
   frames = {};   // clear old frames
+  dayMeta = {};
   const days = meta.days;
 
   for (let i = 0; i < days.length; i++) {
@@ -146,6 +161,9 @@ async function bootstrap(fieldName) {
       if (!r.ok) throw new Error(`buffer HTTP ${r.status} day=${day}`);
       const ab = await r.arrayBuffer();
       frames[day] = new Float32Array(ab);
+
+      const mr = await fetch(`${API}/api/buffer/day/${day}${fieldParam}`);
+      if (mr.ok) dayMeta[day] = await mr.json();
     } catch (e) {
       console.error(e);
     }
@@ -224,6 +242,10 @@ function initScene() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  if (qualityEnhanced) {
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+  }
   wrapper.appendChild(renderer.domElement);
 
   // Scene — bright light background
@@ -285,6 +307,9 @@ function initScene() {
 
   // Build instanced plant mesh
   buildInstancedMesh();
+
+  if (qualityEnhanced) initRainSystem(fieldW, fieldD);
+  if (qualityEnhanced) initEnhancedRendering(W, H);
 
   // ---- Raycasting click listener -------------------------------------------
   renderer.domElement.addEventListener('click', onCanvasClick, false);
@@ -415,10 +440,280 @@ function _cylinderGeo() {
 
 function _makePlantMat() {
   // PBR plant material — instanced colour via instanceColor
+  if (qualityEnhanced) {
+    return new THREE.MeshPhysicalMaterial({
+      roughness: 0.6,
+      metalness: 0.0,
+      transmission: 0.15,
+      thickness: 0.5,
+      ior: 1.4,
+    });
+  }
   return new THREE.MeshStandardMaterial({
     roughness: 0.6,
     metalness: 0.0,
   });
+}
+
+function initEnhancedRendering(width, height) {
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+
+  const ssaoPass = new SSAOPass(scene, camera, width, height);
+  ssaoPass.kernelRadius = 8;
+  ssaoPass.minDistance = 0.001;
+  ssaoPass.maxDistance = 0.3;
+  composer.addPass(ssaoPass);
+
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(width, height),
+    0.3,
+    0.4,
+    0.85,
+  );
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
+}
+
+function _installPlantMorphShader(material, geometry) {
+  const morphPositions = geometry.morphAttributes?.position || [];
+  const hasMorphTargets = morphPositions.length >= 2;
+  const useDiseaseShader = qualityEnhanced;
+  if (!hasMorphTargets && !useDiseaseShader) {
+    material.userData.cfMorphTargetsEnabled = false;
+    material.userData.cfWiltEnabled = false;
+    material.userData.cfDiseaseShaderEnabled = false;
+    return;
+  }
+
+  if (hasMorphTargets) {
+    geometry.setAttribute('cfMorphStart', morphPositions[0]);
+    geometry.setAttribute('cfMorphEnd', morphPositions[1]);
+    if (morphPositions.length >= 3) geometry.setAttribute('cfMorphWilt', morphPositions[2]);
+  }
+
+  material.userData.cfMorphTargetsEnabled = hasMorphTargets;
+  material.userData.cfWiltEnabled = hasMorphTargets;
+  material.userData.cfWiltUsesTarget = hasMorphTargets && morphPositions.length >= 3;
+  material.userData.cfDiseaseShaderEnabled = useDiseaseShader;
+  material.defines = material.defines || {};
+  material.defines.CF_USE_STAGE_MORPH = hasMorphTargets ? 1 : 0;
+  material.defines.CF_HAS_WILT_TARGET = morphPositions.length >= 3 ? 1 : 0;
+  material.defines.CF_USE_DISEASE_SHADER = useDiseaseShader ? 1 : 0;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.cfMorphTargetsRelative = { value: geometry.morphTargetsRelative !== false };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        attribute float cfMorphWeight;
+        attribute float cfWiltWeight;
+        attribute float cfDiseaseSeverity;
+        varying float vCfDiseaseSeverity;
+        attribute vec3 cfMorphStart;
+        attribute vec3 cfMorphEnd;
+        #if CF_HAS_WILT_TARGET == 1
+          attribute vec3 cfMorphWilt;
+        #endif
+        uniform bool cfMorphTargetsRelative;`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        #if CF_USE_DISEASE_SHADER == 1
+          vCfDiseaseSeverity = cfDiseaseSeverity;
+        #endif
+        #if CF_USE_STAGE_MORPH == 1
+          vec3 cfStageStart = cfMorphTargetsRelative ? position + cfMorphStart : cfMorphStart;
+          vec3 cfStageEnd = cfMorphTargetsRelative ? position + cfMorphEnd : cfMorphEnd;
+          transformed = mix(cfStageStart, cfStageEnd, clamp(cfMorphWeight, 0.0, 1.0));
+          #if CF_HAS_WILT_TARGET == 1
+            vec3 cfWiltTarget = cfMorphTargetsRelative ? position + cfMorphWilt : cfMorphWilt;
+            transformed = mix(transformed, cfWiltTarget, clamp(cfWiltWeight, 0.0, 1.0));
+          #else
+            float cfWilt = clamp(cfWiltWeight, 0.0, 1.0);
+            float cfTipWeight = smoothstep(0.05, 1.0, position.y);
+            transformed.y -= cfTipWeight * cfWilt * 0.25;
+            transformed.xz *= 1.0 + cfTipWeight * cfWilt * 0.08;
+          #endif
+        #endif`
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        varying float vCfDiseaseSeverity;`
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        #if CF_USE_DISEASE_SHADER == 1
+          vec3 cfNecroticColor = vec3(0.55, 0.35, 0.10);
+          diffuseColor.rgb = mix(diffuseColor.rgb, cfNecroticColor, clamp(vCfDiseaseSeverity, 0.0, 1.0));
+        #endif`
+      );
+  };
+  material.needsUpdate = true;
+}
+
+function _configurePlantMesh(im, n) {
+  const morphWeights = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+  const wiltWeights = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+  const diseaseSeverities = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+  morphWeights.setUsage(THREE.DynamicDrawUsage);
+  wiltWeights.setUsage(THREE.DynamicDrawUsage);
+  diseaseSeverities.setUsage(THREE.DynamicDrawUsage);
+  im.geometry.setAttribute('cfMorphWeight', morphWeights);
+  im.geometry.setAttribute('cfWiltWeight', wiltWeights);
+  im.geometry.setAttribute('cfDiseaseSeverity', diseaseSeverities);
+  _installPlantMorphShader(im.material, im.geometry);
+}
+
+function _wiltWeightFromStress(stressKs) {
+  if (!Number.isFinite(stressKs) || stressKs >= 0.5) return 0.0;
+  return Math.max(0.0, Math.min(1.0, (0.5 - stressKs) / 0.5));
+}
+
+function _terrainYAt(row, col) {
+  if (!terrainGrid) return 0.0;
+  const r = Math.max(0, Math.min(terrainRows - 1, Math.round(row)));
+  const c = Math.max(0, Math.min(terrainCols - 1, Math.round(col)));
+  return (_terrainElevScale > 0)
+    ? (terrainGrid[r * terrainCols + c] - _terrainEMin) * _terrainElevScale
+    : 0.0;
+}
+
+function initRainSystem(fieldW, fieldD) {
+  if (!qualityEnhanced || rainSystem || !scene) return;
+
+  const count = _RAIN_PARTICLE_COUNT;
+  rainPositions = new Float32Array(count * 3);
+  const topY = Math.max(6.0, Math.min(32.0, Math.max(fieldW, fieldD) * 0.35));
+  for (let i = 0; i < count; i++) {
+    const base = i * 3;
+    rainPositions[base + 0] = Math.random() * fieldW;
+    rainPositions[base + 1] = 0.5 + Math.random() * topY;
+    rainPositions[base + 2] = Math.random() * fieldD;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+  geo.setDrawRange(0, 0);
+
+  const mat = new THREE.PointsMaterial({
+    color: 0x9ecfff,
+    size: 0.035,
+    transparent: true,
+    opacity: 0.0,
+    depthWrite: false,
+  });
+
+  rainSystem = new THREE.Points(geo, mat);
+  rainSystem.visible = false;
+  rainSystem.frustumCulled = false;
+  rainSystem.userData = { fieldW, fieldD, topY, fallSpeed: 0.12 };
+  scene.add(rainSystem);
+}
+
+function _updateRainForDay(day) {
+  if (!qualityEnhanced || !rainSystem) return;
+  const precipitation = Number(dayMeta[day]?.precipitation_mm || 0.0);
+  if (!Number.isFinite(precipitation) || precipitation < _RAIN_HIDE_THRESHOLD_MM) {
+    rainActiveCount = 0;
+    rainSystem.visible = false;
+    rainSystem.geometry.setDrawRange(0, 0);
+    rainSystem.material.opacity = 0.0;
+    return;
+  }
+
+  const intensity = Math.max(0.0, Math.min(1.0, precipitation / 40.0));
+  rainActiveCount = Math.max(250, Math.floor(_RAIN_PARTICLE_COUNT * intensity));
+  rainSystem.geometry.setDrawRange(0, rainActiveCount);
+  rainSystem.material.opacity = 0.18 + intensity * 0.42;
+  rainSystem.userData.fallSpeed = 0.08 + intensity * 0.24;
+  rainSystem.visible = true;
+}
+
+function _animateRain() {
+  if (!qualityEnhanced || !rainSystem || !rainSystem.visible || rainActiveCount <= 0) return;
+  const positions = rainSystem.geometry.attributes.position.array;
+  const { fieldW, fieldD, topY, fallSpeed } = rainSystem.userData;
+  const speed = fallSpeed * (speedMult || 1);
+
+  for (let i = 0; i < rainActiveCount; i++) {
+    const base = i * 3;
+    positions[base + 1] -= speed;
+    if (positions[base + 1] < 0.0) {
+      positions[base + 0] = Math.random() * fieldW;
+      positions[base + 1] = topY;
+      positions[base + 2] = Math.random() * fieldD;
+    }
+  }
+  rainSystem.geometry.attributes.position.needsUpdate = true;
+}
+
+function _ensureMachineryMesh(machineType) {
+  if (machineryMesh) return machineryMesh;
+  const geo = new THREE.BoxGeometry(0.8, 0.35, 0.45);
+  const mat = new THREE.MeshStandardMaterial({
+    color: machineType === 'harvester' ? 0xc9a227 : 0x335f35,
+    roughness: 0.65,
+    metalness: 0.05,
+  });
+  machineryMesh = new THREE.Mesh(geo, mat);
+  machineryMesh.castShadow = qualityEnhanced;
+  machineryMesh.receiveShadow = false;
+  machineryMesh.visible = false;
+  scene.add(machineryMesh);
+  return machineryMesh;
+}
+
+function _stopMachineryAnimation() {
+  if (machineryAnim) {
+    cancelAnimationFrame(machineryAnim);
+    machineryAnim = null;
+  }
+}
+
+function _animateMachineryForDay(day) {
+  _stopMachineryAnimation();
+  const machinery = dayMeta[day]?.machinery || [];
+  const item = machinery[0];
+  if (!item || !Array.isArray(item.path) || item.path.length < 2) {
+    if (machineryMesh) machineryMesh.visible = false;
+    return;
+  }
+
+  const machine = _ensureMachineryMesh(item.machine_type || 'machine');
+  machine.visible = true;
+  machine.castShadow = qualityEnhanced;
+
+  const path = item.path;
+  const durationMs = playing ? Math.max(250, Math.round(1000 / (6 * speedMult))) : 1200;
+  const startedAt = performance.now();
+
+  const placeAt = (waypoint) => {
+    const x = Number(waypoint[0]) || 0.0;
+    const z = Number(waypoint[1]) || 0.0;
+    machine.position.set(x, _terrainYAt(z, x) + 0.22, z);
+  };
+
+  const tick = (now) => {
+    const t = Math.min(1.0, (now - startedAt) / durationMs);
+    const scaled = t * (path.length - 1);
+    const i = Math.min(path.length - 2, Math.floor(scaled));
+    const localT = scaled - i;
+    const a = path[i];
+    const b = path[i + 1];
+    const x = (Number(a[0]) || 0.0) + ((Number(b[0]) || 0.0) - (Number(a[0]) || 0.0)) * localT;
+    const z = (Number(a[1]) || 0.0) + ((Number(b[1]) || 0.0) - (Number(a[1]) || 0.0)) * localT;
+    machine.position.set(x, _terrainYAt(z, x) + 0.22, z);
+    machine.rotation.y = Math.atan2((Number(b[0]) || 0.0) - (Number(a[0]) || 0.0), (Number(b[1]) || 0.0) - (Number(a[1]) || 0.0));
+    if (t < 1.0) machineryAnim = requestAnimationFrame(tick);
+  };
+
+  placeAt(path[0]);
+  machineryAnim = requestAnimationFrame(tick);
 }
 
 function buildInstancedMesh() {
@@ -426,6 +721,7 @@ function buildInstancedMesh() {
   const geo = _cylinderGeo();
   const mat = _makePlantMat();
   const im = new THREE.InstancedMesh(geo, mat, n);
+  _configurePlantMesh(im, n);
   im.castShadow = qualityEnhanced;
   im.receiveShadow = false;
   im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -453,6 +749,7 @@ async function loadGltfMeshes() {
       if (!geo) { console.warn(`GLTF ${uri}: no mesh found, using cylinder`); continue; }
 
       const im = new THREE.InstancedMesh(geo, _makePlantMat(), n);
+      _configurePlantMesh(im, n);
       im.castShadow = qualityEnhanced;
       im.receiveShadow = false;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -474,6 +771,8 @@ async function loadGltfMeshes() {
 // ponytail: LOD distance threshold — beyond this, dead plants are skipped entirely.
 // Upgrade path: separate billboard InstancedMesh when profiler shows >30% overdraw.
 const _LOD_DEAD_SKIP_SQ = 60 * 60;  // 60 world units squared
+const _RAIN_PARTICLE_COUNT = 6000;
+const _RAIN_HIDE_THRESHOLD_MM = 2.0;
 
 function showDay(day) {
   const frame = frames[day];
@@ -504,6 +803,9 @@ function showDay(day) {
     const alive        = frame[base + 8];
     const model_index  = Math.round(frame[base + 9]);   // 0 = cylinder
     const stage_progress = frame[base + 10];
+    const morph_weight = frame[base + 11];
+    const stress_ks = frame[base + 12];
+    const disease_severity = frame[base + 13];
 
     // Route to the correct InstancedMesh; fall back to cylinder (index 0) if not loaded yet
     const targetMesh = meshes[model_index] || meshes[0];
@@ -512,6 +814,12 @@ function showDay(day) {
     const slotMesh = useIndex0 ? meshes[0] : meshes[model_index];
     // ponytail: instanceId within each mesh = its own sequential slot index
     const slotIdx = useIndex0 ? (perMeshCount[0]++) : (perMeshCount[model_index]++);
+    const morphAttr = slotMesh.geometry.attributes.cfMorphWeight;
+    const wiltAttr = slotMesh.geometry.attributes.cfWiltWeight;
+    const diseaseAttr = slotMesh.geometry.attributes.cfDiseaseSeverity;
+    if (morphAttr) morphAttr.setX(slotIdx, Number.isFinite(morph_weight) ? morph_weight : stage_progress);
+    if (wiltAttr) wiltAttr.setX(slotIdx, _wiltWeightFromStress(stress_ks));
+    if (diseaseAttr) diseaseAttr.setX(slotIdx, Number.isFinite(disease_severity) ? disease_severity : 0.0);
 
     // LOD: skip distant dead plants
     if (!alive) {
@@ -557,6 +865,9 @@ function showDay(day) {
     im.count = usedCount;
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    if (im.geometry.attributes.cfMorphWeight) im.geometry.attributes.cfMorphWeight.needsUpdate = true;
+    if (im.geometry.attributes.cfWiltWeight) im.geometry.attributes.cfWiltWeight.needsUpdate = true;
+    if (im.geometry.attributes.cfDiseaseSeverity) im.geometry.attributes.cfDiseaseSeverity.needsUpdate = true;
     if (day === meta.days[0]) im.geometry.computeBoundingSphere();
   }
 
@@ -573,6 +884,9 @@ function showDay(day) {
   if (window.parent !== window) {
     window.parent.postMessage({ type: 'cf_day_changed', day: day }, '*');
   }
+
+  _animateMachineryForDay(day);
+  _updateRainForDay(day);
 }
 
 // ---------------------------------------------------------------------------
@@ -870,6 +1184,7 @@ window.addEventListener('message', (event) => {
 
     stopPlayback();
     clearSelection();
+    _stopMachineryAnimation();
 
     // Tear down Three.js objects
     if (scene) {
@@ -883,6 +1198,10 @@ window.addEventListener('message', (event) => {
       scene.clear();
     }
     if (renderer) {
+      if (composer) {
+        composer.dispose();
+        composer = null;
+      }
       renderer.dispose();
       const wrapper = document.getElementById('canvas-wrapper');
       if (wrapper && renderer.domElement && wrapper.contains(renderer.domElement)) {
@@ -890,8 +1209,9 @@ window.addEventListener('message', (event) => {
       }
       renderer = null;
     }
-    scene = null; camera = null; controls = null; mesh = null; soilMesh = null;
-    frames = {}; meta = null; terrainGrid = null; terrainRows = 0; terrainCols = 0;
+    scene = null; camera = null; controls = null; mesh = null; soilMesh = null; machineryMesh = null;
+    rainSystem = null; rainPositions = null; rainActiveCount = 0;
+    frames = {}; dayMeta = {}; meta = null; terrainGrid = null; terrainRows = 0; terrainCols = 0;
     _terrainChunks = [];
 
     // Show loader again before re-bootstrapping
@@ -923,7 +1243,12 @@ function animate() {
   requestAnimationFrame(animate);
   if (controls) controls.update();
   updateTerrainLOD();
-  if (renderer && scene && camera) renderer.render(scene, camera);
+  _animateRain();
+  if (composer) {
+    composer.render();
+  } else if (renderer && scene && camera) {
+    renderer.render(scene, camera);
+  }
 }
 
 function onResize() {
@@ -933,6 +1258,7 @@ function onResize() {
   camera.aspect = W / H;
   camera.updateProjectionMatrix();
   renderer.setSize(W, H);
+  if (composer) composer.setSize(W, H);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,43 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [Unreleased]
+## [0.9.5] - 2026-07-09
+
+v0.9.5 completes the CropForge visual architecture arc: bundled crop assets,
+growth morphing, stress and disease shaders, machinery animation, weather
+particles, enhanced PBR rendering, and release-ready visual documentation now
+work together from the same compute-first Parquet pipeline.
+
+### Fixed
+
+- Packaged first-party GLTF stage assets in wheels and declared `cropforge.viz` package data.
+- Added `scipy` as a runtime dependency for Plotly terrain upsampling.
+- `terrain_feedback=False` now freezes terrain elevation geometry while still logging sediment flux.
+- Python GLTF scene export now uses logged terrain elevation instead of a flat mesh.
+- `ModelRegistry.register()` now accepts documented `species=` and `gltf_path=` aliases.
+
+### Added
+
+- **First-party asset bundles** for StandardWheat and StandardMaize now auto-register GLTF stage assets while preserving cylinder fallback for missing models.
+- **Morph target interpolation** transmits `morph_weight` to the frontend and blends growth-stage geometry where GLTF morph targets exist.
+- **Stress and disease visualizations** combine drought wilt deformation with enhanced-mode necrosis fragment shading from `disease_severity`.
+- **Machinery animation framework** logs tillage, spray, and harvest paths to a separate `machinery` Parquet dataset and animates frontend proxy machines from daily metadata.
+- **Weather particle effects** expose daily precipitation metadata and render bounded enhanced-only rain particles.
+- **Capstone lifecycle example** added at `examples/digital_twin_full_lifecycle.py`.
+- `farm.export_animation()` API entry point writes a valid terrain-aware GLB for the first requested keyframe; full animation channels remain scoped to v0.9.5 exporter work.
+- Enhanced WebGL mode now wires SSAO, bloom, ACES tone mapping, and `MeshPhysicalMaterial` for plants behind `quality="enhanced"`.
+- Morph interpolation and disease shader data now travel in the binary viewport buffer as `morph_weight`, `stress_ks`, and `disease_severity`, expanding the internal payload to 14 floats per plant.
+- Machinery path logging now writes a separate `machinery` Parquet dataset, exposes day metadata via `/api/buffer/day/{day}`, and animates a lightweight frontend proxy along logged waypoints.
+- Daily precipitation metadata now reaches `/api/buffer/day/{day}` and drives an enhanced-only bounded rain particle system in the Three.js viewport.
+
+### Changed
+
+- Project version bumped to `0.9.5`.
+- Visual engine documentation updated for first-party assets, morphing, machinery, disease/stress shaders, and weather particles.
+
+### Tested
+
+- **861 tests passing**, 1 skipped, 0 failures. Zero regressions across the visual architecture release arc.
 
 ## [0.9.0] - 2026-07-08
 

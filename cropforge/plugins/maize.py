@@ -21,6 +21,13 @@ import math
 
 from cropforge._plugins_base import CropPlugin, register_crop
 
+# Auto-register first-party GLTF stage models when this plugin is imported.
+try:
+    from cropforge.viz.registry import initialize_first_party_bundles as _init_bundles
+    _init_bundles()
+except Exception:  # ponytail: never crash on missing visual assets
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Phenological stage thermal-time thresholds — CERES-Maize inspired

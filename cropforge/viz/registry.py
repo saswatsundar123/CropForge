@@ -19,6 +19,7 @@ Licence: MIT
 
 from __future__ import annotations
 
+from importlib.resources import files as _resource_files
 from typing import Optional
 
 
@@ -41,7 +42,15 @@ class AssetRegistry:
     _registry: dict[str, dict[int, str]] = {}
 
     @classmethod
-    def register(cls, crop: str, stage: int, uri: str) -> None:
+    def register(
+        cls,
+        crop: Optional[str] = None,
+        stage: Optional[int] = None,
+        uri: Optional[str] = None,
+        *,
+        species: Optional[str] = None,
+        gltf_path: Optional[str] = None,
+    ) -> None:
         """Register a GLTF model URI for a crop species at a growth stage index.
 
         Parameters
@@ -54,16 +63,33 @@ class AssetRegistry:
         uri:
             Path or URI to a GLTF/GLB file. May be relative or absolute.
             For bundled models use ``str(Path(__file__).parent / "models/x.gltf")``.
+        species, gltf_path:
+            Public aliases for ``crop`` and ``uri``. These match the README
+            and PRD examples while preserving older AssetRegistry calls.
 
         Example
         -------
         >>> AssetRegistry.register("StandardWheat", stage=4,
         ...     uri="assets/wheat_anthesis.gltf")
         """
-        cls._registry.setdefault(crop, {})[stage] = uri
+        crop_key = species if species is not None else crop
+        model_uri = gltf_path if gltf_path is not None else uri
+        if not crop_key:
+            raise ValueError("ModelRegistry.register() requires crop or species.")
+        if stage is None:
+            raise ValueError("ModelRegistry.register() requires stage.")
+        if not model_uri:
+            raise ValueError("ModelRegistry.register() requires uri or gltf_path.")
+        cls._registry.setdefault(str(crop_key), {})[int(stage)] = str(model_uri)
 
     @classmethod
-    def get_model_path(cls, crop: str, stage: int) -> Optional[str]:
+    def get_model_path(
+        cls,
+        crop: Optional[str] = None,
+        stage: int = 0,
+        *,
+        species: Optional[str] = None,
+    ) -> Optional[str]:
         """Return the registered GLTF URI, or None if not registered.
 
         None is the cylinder-fallback trigger — the JS renderer uses
@@ -76,7 +102,10 @@ class AssetRegistry:
         stage:
             Stage index (0–6).
         """
-        return cls._registry.get(crop, {}).get(stage)
+        crop_key = species if species is not None else crop
+        if not crop_key:
+            return None
+        return cls._registry.get(str(crop_key), {}).get(int(stage))
 
     @classmethod
     def list_registered(cls) -> dict[str, list[int]]:
@@ -87,3 +116,60 @@ class AssetRegistry:
     def clear(cls) -> None:
         """Reset registry — useful in tests to avoid cross-test state leakage."""
         cls._registry.clear()
+
+
+# ---------------------------------------------------------------------------
+# First-party bundle boot loader (PRD v0.9.5 §4.5)
+# ---------------------------------------------------------------------------
+
+
+# stage index → filename stem (same order as _STAGE_ORDER in each plugin)
+_WHEAT_FILENAMES = [
+    "stage_0_germination",
+    "stage_1_emergence",
+    "stage_2_tillering",
+    "stage_3_stem_ext",
+    "stage_4_anthesis",
+    "stage_5_grain_fill",
+    "stage_6_senescence",
+]
+_MAIZE_FILENAMES = [
+    "stage_0_germination",
+    "stage_1_emergence",
+    "stage_2_veg_early",
+    "stage_3_veg_late",
+    "stage_4_anthesis",
+    "stage_5_grain_fill",
+    "stage_6_senescence",
+]
+
+
+def _register_bundle(crop_key: str, subdir: str, filenames: list) -> None:
+    """Register all stage GLTF files for *crop_key* from *subdir*.
+
+    Silently skips missing files — cylinder fallback stays active.
+    """
+    try:
+        bundle_dir = _resource_files("cropforge").joinpath("viz", "assets", subdir)
+        for stage_idx, stem in enumerate(filenames):
+            path = bundle_dir.joinpath(f"{stem}.gltf")
+            if path.is_file():
+                AssetRegistry.register(crop_key, stage_idx, str(path))
+    except Exception:
+        return
+
+
+def initialize_first_party_bundles() -> None:
+    """Register all built-in crop stage GLTF models.
+
+    Called automatically on import of StandardWheat / StandardMaize.
+    Researchers never need to call this manually.
+    """
+    _register_bundle("StandardWheat", "standard_wheat", _WHEAT_FILENAMES)
+    _register_bundle("StandardMaize", "standard_maize", _MAIZE_FILENAMES)
+
+
+# ---------------------------------------------------------------------------
+# PRD v0.9.5 §2.3 compat alias — `from cropforge.models import ModelRegistry` works
+# ---------------------------------------------------------------------------
+ModelRegistry = AssetRegistry

@@ -11,8 +11,9 @@ Requires: pygltflib >= 1.16
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 
@@ -96,14 +97,14 @@ def export_scene(
 
     rows = int(day_df["row"].max()) + 1
     cols = int(day_df["col"].max()) + 1
-    spacing = 1.0
+    terrain_grid, spacing = _load_terrain_grid(log_dir, field, rows, cols)
 
     # ---- Build combined geometry (terrain + plants as boxes) ----
     all_positions = []
     all_indices   = []
     vertex_offset  = 0
 
-    tp, ti = _build_flat_terrain(rows, cols, spacing)
+    tp, ti = _build_terrain(terrain_grid, spacing)
     all_positions.append(tp)
     all_indices.append(ti + vertex_offset)
     vertex_offset += len(tp)
@@ -114,8 +115,9 @@ def export_scene(
             continue
         x = float(row_data["col"]) * spacing
         z = float(row_data["row"]) * spacing
+        y_base = float(terrain_grid[int(row_data["row"]), int(row_data["col"])])
         h = max(float(row_data.get("height_cm", 5.0)) / 100.0, 0.05)
-        pp, pi = _build_box(x, 0.0, z, 0.04, h, 0.04)
+        pp, pi = _build_box(x, y_base, z, 0.04, h, 0.04)
         all_positions.append(pp)
         all_indices.append(pi + vertex_offset)
         vertex_offset += len(pp)
@@ -164,13 +166,57 @@ def export_scene(
     return out
 
 
+def export_animation(
+    log_path: str,
+    days: Iterable[int],
+    filepath: str = "season.glb",
+    field: Optional[str] = None,
+    fps: int = 4,
+) -> Path:
+    """Export a multi-day GLB placeholder using the first requested keyframe.
+
+    The full morph/keyframe animation writer is part of v0.9.5 feature work.
+    This pre-v0.9.5 API closes the missing method gap and produces a valid
+    terrain-aware GLB instead of failing at call time.
+    """
+    day_list = [int(d) for d in days]
+    if not day_list:
+        raise ValueError("export_animation() requires at least one day.")
+    if fps <= 0:
+        raise ValueError("export_animation() fps must be positive.")
+    return export_scene(log_path=log_path, day=day_list[0], filepath=filepath, field=field)
+
+
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def _build_flat_terrain(rows: int, cols: int, spacing: float):
+def _load_terrain_grid(log_dir: Path, field: str, rows: int, cols: int) -> tuple[np.ndarray, float]:
+    """Return logged terrain elevation for *field*, or a flat legacy fallback."""
+    terrain_file = log_dir / "terrain.json"
+    if terrain_file.exists():
+        try:
+            data = json.loads(terrain_file.read_text(encoding="utf-8"))
+            info = data.get(field)
+            if info:
+                grid = np.array(info["elevation_flat"], dtype=np.float32).reshape(
+                    int(info["rows"]), int(info["cols"])
+                )
+                if grid.shape == (rows, cols):
+                    return grid, float(info.get("resolution_m", 1.0))
+        except Exception:
+            pass
+    return np.zeros((rows, cols), dtype=np.float32), 1.0
+
+
+def _build_terrain(elevation_grid: np.ndarray, spacing: float):
+    rows, cols = elevation_grid.shape
     positions = np.array(
-        [[c * spacing, 0.0, r * spacing] for r in range(rows) for c in range(cols)],
+        [
+            [c * spacing, float(elevation_grid[r, c]), r * spacing]
+            for r in range(rows)
+            for c in range(cols)
+        ],
         dtype=np.float32,
     )
     indices = []
