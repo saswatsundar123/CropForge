@@ -7,7 +7,6 @@ v0.9.5 completes CropForge's visual architecture arc with First-Party Asset Bund
 > Open-source, code-first virtual farm runtime for agricultural researchers.
 
 [![PyPI version](https://badge.fury.io/py/cropforge.svg)](https://badge.fury.io/py/cropforge)
-[![Tests](https://github.com/saswatsundar123/cropforge/actions/workflows/publish.yml/badge.svg)](https://github.com/saswatsundar123/cropforge/actions)
 [![Docs](https://readthedocs.org/projects/cropforge/badge/?version=latest)](https://cropforge.readthedocs.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
