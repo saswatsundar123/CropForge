@@ -1,11 +1,5 @@
 # CropForge
 
-## What's New in v0.9.5 - Visual Architecture Complete
-
-v0.9.5 completes CropForge's visual architecture arc with First-Party Asset Bundles, Machinery Animation, Stress/Disease Visualizations, enhanced-mode rain particles, PBR rendering, morph targets, and terrain-aware GLB export.
-
-> Open-source, code-first virtual farm runtime for agricultural researchers.
-
 [![PyPI version](https://badge.fury.io/py/cropforge.svg)](https://badge.fury.io/py/cropforge)
 [![Tests](https://github.com/saswatsundar123/cropforge/actions/workflows/publish.yml/badge.svg)](https://github.com/saswatsundar123/cropforge/actions)
 [![Docs](https://readthedocs.org/projects/cropforge/badge/?version=latest)](https://cropforge.readthedocs.io)
@@ -18,6 +12,12 @@ pip install cropforge
 ```
 
 ---
+
+## What's New in v0.9.5 - Visual Architecture Complete
+
+v0.9.5 completes CropForge's visual architecture arc with First-Party Asset Bundles, Machinery Animation, Stress/Disease Visualizations, enhanced-mode rain particles, PBR rendering, morph targets, and terrain-aware GLB export.
+
+> Open-source, code-first virtual farm runtime for agricultural researchers.
 
 ## What's New in v0.9.0 — Photorealistic PBR Rendering & GLTF Export
 
