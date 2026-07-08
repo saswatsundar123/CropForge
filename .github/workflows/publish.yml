@@ -39,6 +39,9 @@ jobs:
       - name: CI Badges
         uses: GaelGirodon/ci-badges-action@v1.10.0
         if: always()
+        with:
+          gist-id: ${{ secrets.GIST_ID }}
+          token: ${{ secrets.GIST_TOKEN }}
 
   # -------------------------------------------------------------------------
   # Build distribution
