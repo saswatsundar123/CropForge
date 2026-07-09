@@ -9,10 +9,10 @@ description = "Open-source, code-first virtual farm runtime for agricultural res
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Saswat Sundar Rath", email = "saswat@example.com" }
+    { name = "saswatsundar123 Sundar Rath", email = "saswatsundar123@example.com" }
 ]
 maintainers = [
-    { name = "Saswat Sundar Rath", email = "saswat@example.com" }
+    { name = "saswatsundar123 Sundar Rath", email = "saswatsundar123@example.com" }
 ]
 keywords = [
     "crop simulation", "agriculture", "farm runtime", "agronomy",
@@ -61,11 +61,11 @@ docs = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/saswat/cropforge"
+Homepage      = "https://github.com/saswatsundar123/cropforge"
 Documentation = "https://cropforge.readthedocs.io"
-Repository    = "https://github.com/saswat/cropforge.git"
-"Bug Tracker" = "https://github.com/saswat/cropforge/issues"
-Changelog     = "https://github.com/saswat/cropforge/blob/main/CHANGELOG.md"
+Repository    = "https://github.com/saswatsundar123/cropforge.git"
+"Bug Tracker" = "https://github.com/saswatsundar123/cropforge/issues"
+Changelog     = "https://github.com/saswatsundar123/cropforge/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths    = ["tests"]

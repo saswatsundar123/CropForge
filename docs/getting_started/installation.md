@@ -14,7 +14,7 @@ pip install cropforge
 ## Install from Source
 
 ```bash
-git clone https://github.com/saswat/cropforge.git
+git clone https://github.com/saswatsundar123/cropforge.git
 cd cropforge
 pip install -e ".[dev]"
 ```
