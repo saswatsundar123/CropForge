@@ -78,3 +78,30 @@ We use standard labels to manage issues:
 * `enhancement`: New feature or request
 * `crop-package`: Specific to first-party crop plugins (like StandardWheat)
 * `documentation`: Improvements or additions to documentation
+
+## Submitting A Crop Plugin
+
+CropForge welcomes new crop plugins through pull requests. A good plugin PR is
+small, reproducible, and scientifically traceable.
+
+Before opening a plugin PR:
+
+1. Open a `Crop plugin submission` issue using the repository issue template.
+2. Explain the target crop, cultivar or variety, production region, and intended
+   scope of the model.
+3. Include the scientific basis: equations, units, parameter ranges, calibration
+   source, and any field-trial or literature references.
+4. Implement the plugin as a `CropPlugin` subclass and register it with
+   `@register_crop(...)`.
+5. Provide `default_crop()` so users can initialize the crop with sensible
+   defaults.
+6. Add focused tests for phenology, biomass or yield, stress response if
+   present, and edge cases.
+7. If visual assets are included, keep GLTF/GLB files lightweight, document
+   licensing, and wire first-party auto-registration without requiring users to
+   call the asset registry manually.
+8. Run `pytest` before submitting the PR.
+
+Plugin submissions should avoid changing unrelated core physics or dashboard
+behaviour. If a crop needs new framework capabilities, open a separate feature
+request first so the architecture can be discussed independently.

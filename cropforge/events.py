@@ -182,9 +182,19 @@ class _IrrigationEvent(_BaseEvent):
                 voxel.moisture_pct = min(sat, voxel.moisture_pct + moisture_increase)
                 n_cells += 1
 
+        path = _boustrophedon_path(field_state)
+        field_state.custom.setdefault("machinery_events", []).append({
+            "day": day,
+            "field_name": self.field,
+            "event_name": self.name,
+            "machine_type": "sprinkler",
+            "path": path,
+            "amount_mm": float(self.amount_mm),
+        })
+
         logger.debug(
-            "IrrigationEvent: day=%d field=%r +%.1f mm → %d cells layer-0 moisture updated.",
-            day, self.field, self.amount_mm, n_cells,
+            "IrrigationEvent: day=%d field=%r +%.1f mm → %d cells layer-0 moisture updated, %d sprinkler waypoints logged.",
+            day, self.field, self.amount_mm, n_cells, len(path),
         )
 
     def __repr__(self) -> str:

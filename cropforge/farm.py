@@ -34,6 +34,7 @@ from cropforge.crop import Crop
 from cropforge.state import (
     EnvironmentState,
     FieldState,
+    PlantingConfig,
     PlantState,
     SoilVoxelState,
 )
@@ -182,6 +183,8 @@ class Field:
 
         # v0.6.0 -- Land preparation modifier (None = no modification)
         self._land_prep: Optional[Any] = None
+        self._weed_params: Optional[Any] = None
+        self._planting_config: Optional[PlantingConfig] = None
 
     # ------------------------------------------------------------------
     # Physical area properties (PRD v0.8.0 §4.2)
@@ -198,15 +201,63 @@ class Field:
         """Total physical field area in m² (rows × cols × cell_area_m2)."""
         return self.rows * self.cols * self.cell_area_m2
 
+    def _default_planting_density(self) -> float:
+        """Return crop-specific default plants/m² for yield scaling."""
+        crop_name = (self.crop.species if self.crop is not None else "").lower()
+        if "wheat" in crop_name or "triticum" in crop_name:
+            return 250.0
+        if "maize" in crop_name or "corn" in crop_name or "zea" in crop_name:
+            return 8.0
+        return 1.0
+
+    def _resolve_planting_config(self) -> PlantingConfig:
+        """Return an explicit or crop-default planting configuration."""
+        if self._planting_config is not None:
+            return self._planting_config
+        return PlantingConfig(plants_per_m2=self._default_planting_density())
+
     # ------------------------------------------------------------------
     # Attachment methods (PRD Section 6.1)
     # ------------------------------------------------------------------
 
-    def set_crop(self, crop: Crop) -> None:
+    def set_crop(
+        self,
+        crop: Crop,
+        sowing_density_plants_per_m2: Optional[float] = None,
+    ) -> None:
         """Attach a :class:`~cropforge.crop.Crop` to this field."""
         if not isinstance(crop, Crop):
             raise TypeError(f"Expected a Crop instance, got {type(crop).__name__}.")
         self.crop = crop
+        if sowing_density_plants_per_m2 is not None:
+            self.set_planting_config(plants_per_m2=sowing_density_plants_per_m2)
+
+    def set_planting_config(
+        self,
+        pattern: str = "rows",
+        row_spacing_m: float = 0.25,
+        plant_spacing_m: float = 0.10,
+        plants_per_m2: float = 0.0,
+        sowing_density_plants_per_m2: Optional[float] = None,
+    ) -> None:
+        """Set planting geometry for yield scaling and visual density.
+
+        PlantState remains one representative plant per grid cell. The density
+        is used by :meth:`Farm.yield_summary` and dashboard rendering, not by
+        the daily crop-growth physics.
+        """
+        if sowing_density_plants_per_m2 is not None:
+            plants_per_m2 = float(sowing_density_plants_per_m2)
+        self._planting_config = PlantingConfig(
+            pattern=pattern,
+            row_spacing_m=float(row_spacing_m),
+            plant_spacing_m=float(plant_spacing_m),
+            plants_per_m2=float(plants_per_m2),
+        )
+        if self._field_state is not None:
+            self._field_state.planting_config = self._planting_config
+            for plant in self._field_state.plants:
+                plant.sowing_density_plants_per_m2 = self._planting_config.plants_per_m2
 
     def set_weather(self, weather: Any) -> None:
         """Attach a Weather data source.
@@ -330,6 +381,29 @@ class Field:
             for cell_soils in row_soils:
                 for voxel in cell_soils:
                     voxel.custom.update(params)
+
+    def set_weed_params(
+        self,
+        species: str = "generic_grass",
+        initial_density_m2: float = 0.0,
+        emergence_doy: int = 1,
+        spread_rate: float = 0.0,
+        competitive_index: float = 1.0,
+        daily_lai_growth: float = 0.03,
+        max_lai: float = 2.5,
+    ) -> None:
+        """Configure opt-in weed competition for this field."""
+        from cropforge.physics.weeds import WeedParams
+
+        self._weed_params = WeedParams(
+            species=species,
+            initial_density_m2=float(initial_density_m2),
+            emergence_doy=int(emergence_doy),
+            spread_rate=float(spread_rate),
+            competitive_index=float(competitive_index),
+            daily_lai_growth=float(daily_lai_growth),
+            max_lai=float(max_lai),
+        )
 
     def set_elevation(self, dem: np.ndarray) -> None:
         """Replace the elevation grid with a custom DEM array.
@@ -503,11 +577,13 @@ class Field:
         Also applies ``_water_params`` to every voxel if ``set_water_params()``
         has been called before ``run()``.
         """
+        planting_config = self._resolve_planting_config()
         plants: List[PlantState] = [
             PlantState(
                 plant_id=f"r{r:02d}c{c:02d}",
                 row=r,
                 col=c,
+                sowing_density_plants_per_m2=planting_config.plants_per_m2,
             )
             for r in range(self.rows)
             for c in range(self.cols)
@@ -561,7 +637,24 @@ class Field:
             elevation_grid=effective_elevation,
             events_fired=[],
             terrain=self._terrain,
+            planting_config=planting_config,
         )
+        if self._farm is not None and self._farm._physics_config.get("weed_pressure", False):
+            from cropforge.physics.weeds import WeedParams, initialise_weed_grid
+
+            weed_params = self._weed_params or WeedParams()
+            weed_seed = int(self._farm._physics_config.get("weed_seed", 1009))
+            weed_rng = np.random.default_rng(weed_seed)
+            self._field_state.weed_grid = initialise_weed_grid(
+                self.rows,
+                self.cols,
+                weed_params,
+                resolution_m,
+                weed_rng,
+            )
+            self._field_state.custom["_weed_seed"] = weed_seed
+            self._field_state.custom["_weed_params"] = weed_params
+            setattr(self._field_state, "_weed_rng", weed_rng)
         # Apply water balance parameters to all voxels if configured
         self._apply_water_params_to_state(self._field_state)
         self._apply_nitrogen_params_to_state(self._field_state)
@@ -714,6 +807,65 @@ class Farm:
     def fields(self) -> List[Field]:
         """Read-only view of attached fields."""
         return list(self._fields)
+
+    def set_weed_params(self, field: Optional[str] = None, **kwargs) -> None:
+        """Configure weed competition parameters for one field or all fields."""
+        targets = self._fields
+        if field is not None:
+            targets = [f for f in self._fields if f.name == field]
+            if not targets:
+                raise ValueError(f"No field named {field!r} exists in farm {self.name!r}.")
+        for target in targets:
+            target.set_weed_params(**kwargs)
+
+    def set_planting_config(self, field: Optional[str] = None, **kwargs) -> None:
+        """Configure planting density/geometry for one field or all fields."""
+        targets = self._fields
+        if field is not None:
+            targets = [f for f in self._fields if f.name == field]
+            if not targets:
+                raise ValueError(f"No field named {field!r} exists in farm {self.name!r}.")
+        for target in targets:
+            target.set_planting_config(**kwargs)
+
+    def add_crop(
+        self,
+        crop_type: Union[str, Crop],
+        field: Optional[str] = None,
+        sowing_density_plants_per_m2: Optional[float] = None,
+        **crop_kwargs,
+    ) -> Crop:
+        """Attach a crop to a field, with optional sowing density metadata.
+
+        This is a convenience wrapper around :meth:`Field.set_crop`; existing
+        scripts using ``field.set_crop(...)`` remain unchanged.
+        """
+        if not self._fields:
+            raise ValueError("Cannot add a crop before adding at least one field.")
+        targets = self._fields
+        if field is not None:
+            targets = [f for f in self._fields if f.name == field]
+            if not targets:
+                raise ValueError(f"No field named {field!r} exists in farm {self.name!r}.")
+        if len(targets) != 1:
+            raise ValueError(
+                "Farm.add_crop() needs a field name when the farm has multiple fields."
+            )
+
+        if isinstance(crop_type, Crop):
+            crop = crop_type
+        elif isinstance(crop_type, str):
+            crop = Crop(species=crop_type, **crop_kwargs)
+        else:
+            raise TypeError(
+                f"crop_type must be a Crop or species string, got {type(crop_type).__name__}."
+            )
+
+        targets[0].set_crop(
+            crop,
+            sowing_density_plants_per_m2=sowing_density_plants_per_m2,
+        )
+        return crop
 
     # ------------------------------------------------------------------
     # Event management (PRD v0.3.0 Section 4)
@@ -896,6 +1048,8 @@ class Farm:
         disease_wind_direction_deg: float = 270.0,
         disease_anisotropy: float = 0.80,
         disease_seed: int | None = None,
+        weed_pressure: bool = False,
+        weed_seed: int = 1009,
     ) -> None:
         """Enable opt-in physics engines for this farm (PRD v0.2.0 / v0.3.0 / v0.5.0).
 
@@ -980,6 +1134,7 @@ class Farm:
             PHASE_RADIATION_ENGINE,
             PHASE_WIND_ENGINE,
             PHASE_DISEASE_ENGINE,
+            PHASE_WEED_ENGINE,
             PHASE_CLOD_ENGINE,
             PHASE_EROSION_ENGINE,
             PHASE_SEDIMENT_ENGINE,
@@ -990,6 +1145,7 @@ class Farm:
             make_radiation_hook,
             make_wind_hook,
             make_disease_hook,
+            make_weed_hook,
             make_root_clamp_hook,
             make_clod_dynamics_hook,
             make_erosion_hook,
@@ -1034,6 +1190,8 @@ class Farm:
             "sediment_transport": sediment_transport,
             "terrain_feedback": terrain_feedback,
             "disease": disease,
+            "weed_pressure": weed_pressure,
+            "weed_seed": int(weed_seed),
             "elevation_m": elevation_m,
             "anemometer_height_m": anemometer_height_m,
         })
@@ -1115,6 +1273,17 @@ class Farm:
                 disease_wind_direction_deg, disease_latency_days,
             )
 
+        if weed_pressure:
+            from cropforge.physics.weeds import WeedParams
+
+            params = self._fields[0]._weed_params if self._fields and self._fields[0]._weed_params else WeedParams()
+            hook = make_weed_hook(params)
+            self._physics_registry.append((PHASE_WEED_ENGINE, hook))
+            logger.info(
+                "Farm %r: Weed competition engine enabled (phase=%d).",
+                self.name, PHASE_WEED_ENGINE,
+            )
+
         if root_clamping:
             hook = make_root_clamp_hook()
             self._physics_registry.append((PHASE_ROOT_CLAMP, hook))
@@ -1156,7 +1325,7 @@ class Farm:
 
         if not any([et0, root_impedance, water_balance,
                      nutrients, lateral_flow, radiation,
-                     disease, terrain_wind, root_clamping, clod_dynamics, erosion,
+                     disease, weed_pressure, terrain_wind, root_clamping, clod_dynamics, erosion,
                      sediment_transport]):
             logger.debug(
                 "Farm %r: use_physics() called with all engines disabled -- no-op.",
@@ -1190,6 +1359,89 @@ class Farm:
         from cropforge.runtime import CropForgeStepError, _execute_run
 
         _execute_run(self, days)
+
+    def yield_summary(self) -> dict:
+        """Return field-level harvested yield scaled by planting density.
+
+        Plant states are representative plants for grid cells. For each cell:
+
+            harvested_g = representative_yield_g * plants_per_m2 * cell_area_m2
+
+        The field total is converted to kg, then divided by physical hectares
+        computed from ``rows * cols * resolution_m²``.
+        """
+        if not self._fields:
+            return {
+                "total_yield_kg": 0.0,
+                "yield_kg_per_ha": 0.0,
+                "yield_t_per_ha": 0.0,
+            }
+
+        field_results: Dict[str, dict] = {}
+        total_yield_kg = 0.0
+        total_area_m2 = 0.0
+
+        for field in self._fields:
+            state = field._field_state
+            if state is None:
+                raise RuntimeError(
+                    f"Field {field.name!r} has no simulation state. "
+                    "Call farm.run() before yield_summary()."
+                )
+
+            cfg = state.planting_config or field._resolve_planting_config()
+            density = max(0.0, float(cfg.plants_per_m2))
+            cell_area_m2 = field.cell_area_m2
+            field_area_m2 = field.field_area_m2
+
+            grain_values = [
+                float(plant.custom.get("grain_biomass_g", 0.0) or 0.0)
+                for plant in state.plants
+            ]
+            use_grain = any(value > 0.0 for value in grain_values)
+
+            total_yield_g = 0.0
+            total_biomass_g = 0.0
+            total_grain_g = 0.0
+            for plant, grain_g in zip(state.plants, grain_values):
+                biomass_g = float(plant.biomass_g or 0.0)
+                plant_density = float(
+                    getattr(plant, "sowing_density_plants_per_m2", density) or density
+                )
+                scale = max(0.0, plant_density) * cell_area_m2
+                total_biomass_g += biomass_g * scale
+                total_grain_g += grain_g * scale
+                total_yield_g += (grain_g if use_grain else biomass_g) * scale
+
+            field_yield_kg = total_yield_g / 1000.0
+            field_area_ha = field_area_m2 / 10000.0
+            yield_kg_per_ha = (
+                field_yield_kg / field_area_ha if field_area_ha > 0.0 else 0.0
+            )
+            field_results[field.name] = {
+                "total_yield_kg": field_yield_kg,
+                "yield_kg_per_ha": yield_kg_per_ha,
+                "yield_t_per_ha": yield_kg_per_ha / 1000.0,
+                "total_biomass_kg": total_biomass_g / 1000.0,
+                "total_grain_kg": total_grain_g / 1000.0,
+                "density_plants_per_m2": density,
+                "area_m2": field_area_m2,
+            }
+            total_yield_kg += field_yield_kg
+            total_area_m2 += field_area_m2
+
+        total_area_ha = total_area_m2 / 10000.0
+        total_yield_kg_per_ha = (
+            total_yield_kg / total_area_ha if total_area_ha > 0.0 else 0.0
+        )
+        summary = {
+            "total_yield_kg": total_yield_kg,
+            "yield_kg_per_ha": total_yield_kg_per_ha,
+            "yield_t_per_ha": total_yield_kg_per_ha / 1000.0,
+        }
+        if len(field_results) > 1:
+            summary["fields"] = field_results
+        return summary
 
     # ------------------------------------------------------------------
     # Multi-season API (v0.4.0 -- PRD Section 7)
@@ -1434,12 +1686,16 @@ class Farm:
                 # Field never ran -- nothing to reset
                 continue
 
+            planting_config = f._resolve_planting_config()
+            f._field_state.planting_config = planting_config
+
             # Rebuild plant list from scratch (same grid positions, all state = default)
             f._field_state.plants = [
                 _PS(
                     plant_id=f"r{r:02d}c{c:02d}",
                     row=r,
                     col=c,
+                    sowing_density_plants_per_m2=planting_config.plants_per_m2,
                     # All other fields take dataclass defaults:
                     #   age_days=0, lai=0.0, biomass_g=0.0, height_cm=0.0,
                     #   root_depth_cm=0.0, stress_index=0.0, alive=True,

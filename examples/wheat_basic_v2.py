@@ -1,7 +1,7 @@
 """
 examples/wheat_basic_v2.py
 ===========================
-CropForge v0.5.0 — Wheat Basic (Plugin Edition)
+CropForge v0.5.0 -- Wheat Basic (Plugin Edition)
 
 Identical scenario to wheat_basic.py but model logic is now provided by
 the StandardWheat plugin instead of a manual @farm.step function.
@@ -80,7 +80,7 @@ field_a.set_soil(Soil.from_csv(str(_data_dir / "wheat_uniform_soil_3layer.csv"),
 farm.add_field(field_a)
 
 # ---------------------------------------------------------------------------
-# Attach the StandardWheat plugin — replaces the manual @farm.step growth model
+# Attach the StandardWheat plugin -- replaces the manual @farm.step growth model
 # ---------------------------------------------------------------------------
 field_a.use_plugin(StandardWheat)
 
@@ -124,8 +124,8 @@ final_state = farm._fields[0]._field_state
 alive  = sum(1 for p in final_state.plants if p.alive)
 plants = final_state.plants
 avg_biomass = sum(p.biomass_g for p in plants) / len(plants) if plants else 0
-avg_grain   = sum(p.extra.get("grain_biomass_g", 0.0) for p in plants) / len(plants) if plants else 0
-stage_sample = plants[0].extra.get("phenological_stage", "?") if plants else "?"
+avg_grain   = sum(p.custom.get("grain_biomass_g", 0.0) for p in plants) / len(plants) if plants else 0
+stage_sample = plants[0].custom.get("phenological_stage", "?") if plants else "?"
 
 print(f"\n  Simulation complete. Log -> {farm._last_log_path}")
 print(f"  Field: Plot A  ({len(plants)} plants)")

@@ -93,4 +93,4 @@ The tie-dams intercept D8 flow paths and create micro-deposition zones inside fu
 
 - `examples/conservation_ag_trial.py` — 60-day dual-field comparison with full physics
 - `examples/submetre_performance_trial.py` — 500×500 LOD rendering stress test
-- [API Reference — Sediment Transport](../reference/api.md#erosion--sediment-transport-cropforgephysicssoilpy)
+- [API Overview](../reference/api.md)

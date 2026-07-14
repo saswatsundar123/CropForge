@@ -1,0 +1,29 @@
+{
+  "title": "CropForge",
+  "upload_type": "software",
+  "description": "CropForge is a Python-first crop simulation framework with spatial state management, physics hooks, Parquet logging, and a WebGL dashboard for agronomic digital twins.",
+  "creators": [
+    {
+      "name": "Rath, Saswat Sundar",
+      "affiliation": "ICAR-IARI Jharkhand"
+    }
+  ],
+  "license": "MIT",
+  "access_right": "open",
+  "keywords": [
+    "crop simulation",
+    "agronomy",
+    "digital twin",
+    "precision agriculture",
+    "agriculture",
+    "crop modeling",
+    "Python"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/saswatsundar123/cropforge",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}

@@ -1,24 +1,24 @@
 """
 examples/disease_outbreak_trial.py
 =====================================
-CropForge v0.5.0 — Spatial Disease Outbreak Trial
+CropForge v0.5.0 -- Spatial Disease Outbreak Trial
 
 Demonstrates the Wind-driven Anisotropic Disease Spread engine working
 alongside the StandardWheat plugin and the Beer-Lambert Radiation engine.
 
 Scenario
 --------
-* A 30×30 wheat field (900 plants), 90-day season.
+* A 30x30 wheat field (900 plants), 90-day season.
 * StandardWheat plugin drives phenology and biomass accumulation.
 * Beer-Lambert radiation engine (k=0.45) writes intercepted_par_mj
   to every plant daily.
 * On Day 40, a localised blight outbreak is seeded at the field center
-  (row 15, col 15) via the farm.use_physics(disease=True, disease_foci=…)
-  parameter — exactly as the PRD §8 scenario specifies.
-* Wind blows steadily EAST at 270° (from the West), anisotropy=0.80,
+  (row 15, col 15) via the farm.use_physics(disease=True, disease_foci=...)
+  parameter -- exactly as the PRD sec.8 scenario specifies.
+* Wind blows steadily EAST at 270 deg (from the West), anisotropy=0.80,
   amplifying eastward spread.
 * The simulation prints a spatial disease map every 30 days showing
-  which plants are Susceptible (·), Infected (I), or Resistant (R).
+  which plants are Susceptible (.), Infected (I), or Resistant (R).
 * Outputs a full Parquet log for dashboard playback.
 
 Usage::
@@ -60,9 +60,9 @@ ROWS, COLS = 30, 30         # 900 plants
 CENTER_ROW  = ROWS // 2     # 15
 CENTER_COL  = COLS // 2     # 15
 
-# Disease parameters (§8.2)
+# Disease parameters (sec.8.2)
 OUTBREAK_DAY           = 40
-WIND_FROM_DEGREES      = 270.0   # West wind → blows East
+WIND_FROM_DEGREES      = 270.0   # West wind -> blows East
 SPREAD_RATE            = 0.20    # 20% daily transmission per neighbour
 LATENCY_DAYS           = 3       # 3-day latent period before contagious
 STRESS_INCREMENT       = 0.04    # +0.04 stress_index per infected day
@@ -73,8 +73,8 @@ ANISOTROPY             = 0.80    # Strong directional bias
 # ---------------------------------------------------------------------------
 
 print("\n" + "=" * 60)
-print("  CropForge v0.5.0 — Disease Outbreak Trial")
-print(f"  Field: {ROWS}×{COLS} ({ROWS*COLS} plants)  |  Duration: 90 days")
+print("  CropForge v0.5.0 -- Disease Outbreak Trial")
+print(f"  Field: {ROWS}x{COLS} ({ROWS*COLS} plants)  |  Duration: 90 days")
 print(f"  Disease: seeded at ({CENTER_ROW},{CENTER_COL}) on Day {OUTBREAK_DAY}")
 print(f"  Wind: {WIND_FROM_DEGREES} deg (from West -> blows East)")
 print("=" * 60 + "\n")
@@ -119,7 +119,7 @@ field.use_plugin(StandardWheat)
 # ---------------------------------------------------------------------------
 # Enable Advanced Physics:
 #   - Radiation interception (Beer-Lambert, k=0.45) at phase=-2
-#   - Spatial disease spread (SIR, wind=270°) at phase=-1
+#   - Spatial disease spread (SIR, wind=270 deg) at phase=-1
 #
 # NOTE: disease_foci seeds the center plant on simulation Day 1 of the hook,
 #       but the infection only becomes VISIBLE after OUTBREAK_DAY.
@@ -167,7 +167,7 @@ def introduce_blight(field_state, env_state):
 # ---------------------------------------------------------------------------
 
 def _disease_map(field_state, cols: int = COLS) -> str:
-    """Render a compact grid showing S (·), I, R disease states."""
+    """Render a compact grid showing S (.), I, R disease states."""
     rows = len(field_state.plants) // cols
     lines = []
     for r in range(rows):
@@ -175,7 +175,7 @@ def _disease_map(field_state, cols: int = COLS) -> str:
         for c in range(cols):
             p = field_state.plants[r * cols + c]
             state = p.custom.get("disease_state", "S")
-            row_chars.append("I" if state == "I" else ("R" if state == "R" else "·"))
+            row_chars.append("I" if state == "I" else ("R" if state == "R" else "."))
         lines.append("  " + "".join(row_chars))
     return "\n".join(lines)
 
@@ -189,10 +189,10 @@ def print_disease_snapshot(state, env):
         mid_col = COLS // 2
         east_i = sum(1 for p in state.plants if p.col >= mid_col and p.custom.get("disease_state") == "I")
         west_i = sum(1 for p in state.plants if p.col < mid_col and p.custom.get("disease_state") == "I")
-        print(f"\n  ── Day {state.day} Disease Snapshot ──")
+        print(f"\n  -- Day {state.day} Disease Snapshot --")
         print(f"     Infected:  {infected:4d}  |  Resistant: {resistant}")
         print(f"     East half: {east_i:4d} I  |  West half:  {west_i:4d} I")
-        print(f"     Wind-bias ratio (E/W+1): {east_i / (west_i + 1):.2f}×")
+        print(f"     Wind-bias ratio (E/W+1): {east_i / (west_i + 1):.2f}x")
         print(_disease_map(state))
     return state
 
@@ -223,12 +223,12 @@ avg_par     = sum(p.custom.get("intercepted_par_mj", 0.0) for p in plants) / len
 stage_sample = plants[0].custom.get("phenological_stage", "?") if plants else "?"
 
 print(f"\n{'=' * 60}")
-print(f"  Final Summary — Day 90")
+print(f"  Final Summary -- Day 90")
 print(f"{'=' * 60}")
 print(f"  Plants alive:             {alive} / {len(plants)}")
 print(f"  Mean biomass:             {avg_biomass:.2f} g/plant")
 print(f"  Mean grain biomass:       {avg_grain:.2f} g/plant")
-print(f"  Mean intercepted PAR:     {avg_par:.3f} MJ/m²/day")
+print(f"  Mean intercepted PAR:     {avg_par:.3f} MJ/m^2/day")
 print(f"  Final phenol. stage:      {stage_sample}")
 print(f"")
 print(f"  Disease outcome (Day 90):")
@@ -238,7 +238,7 @@ print(f"    East half infected:     {east_i}")
 print(f"    West half infected:     {west_i}")
 ratio = east_i / (west_i + 1)
 dominance = "[OK] East dominates (wind anisotropy confirmed)" if east_i > west_i else "-> Spread roughly isotropic"
-print(f"    E/W ratio:              {ratio:.2f}×  {dominance}")
+print(f"    E/W ratio:              {ratio:.2f}x  {dominance}")
 print(f"")
 print(f"  Parquet log:  {farm._last_log_path or 'logging disabled'}")
 print(f"{'=' * 60}\n")

@@ -69,6 +69,10 @@ let machineryAnim = null;
 let rainSystem = null;
 let rainPositions = null;
 let rainActiveCount = 0;
+let sprinklerSystem = null;
+let sprinklerPositions = null;
+let weedTintMesh = null;
+let weedMesh = null;
 let renderer, scene, camera, controls, composer;
 
 // ponytail: cache terrain elev constants once at init — not per frame, not per plant
@@ -652,11 +656,90 @@ function _animateRain() {
   rainSystem.geometry.attributes.position.needsUpdate = true;
 }
 
+function _ensureWeedMeshes() {
+  if (!scene || weedTintMesh) return;
+  const n = meta.n_plants;
+
+  const tintGeo = new THREE.PlaneGeometry(0.82, 0.82);
+  tintGeo.rotateX(-Math.PI / 2);
+  const tintMat = new THREE.MeshBasicMaterial({
+    color: 0x8b6f3d,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+  });
+  weedTintMesh = new THREE.InstancedMesh(tintGeo, tintMat, n);
+  weedTintMesh.count = 0;
+  weedTintMesh.frustumCulled = true;
+  scene.add(weedTintMesh);
+
+  if (qualityEnhanced) {
+    const geo = new THREE.ConeGeometry(0.12, 0.35, 5);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x3f7f3a, roughness: 0.8 });
+    weedMesh = new THREE.InstancedMesh(geo, mat, n);
+    weedMesh.count = 0;
+    weedMesh.castShadow = qualityEnhanced;
+    weedMesh.frustumCulled = true;
+    scene.add(weedMesh);
+  }
+}
+
+function _renderWeedsForDay(day) {
+  const weeds = dayMeta[day]?.weeds || [];
+  if (!weeds.length) {
+    if (weedTintMesh) weedTintMesh.count = 0;
+    if (weedMesh) weedMesh.count = 0;
+    return;
+  }
+
+  _ensureWeedMeshes();
+  let count = 0;
+  for (const weed of weeds) {
+    if (!weed.alive) continue;
+    const row = Number(weed.row) || 0;
+    const col = Number(weed.col) || 0;
+    const x = col * meta.grid_spacing;
+    const z = row * meta.grid_spacing;
+    const y = _terrainYAt(row, col) + 0.015;
+    const lai = Math.max(0.05, Math.min(2.5, Number(weed.lai) || 0.2));
+
+    _pos.set(x, y, z);
+    _scl.set(0.7 + lai * 0.08, 1.0, 0.7 + lai * 0.08);
+    _mat.compose(_pos, _quat, _scl);
+    weedTintMesh.setMatrixAt(count, _mat);
+
+    if (weedMesh) {
+      _pos.set(x + 0.16, y + 0.17, z - 0.12);
+      _scl.set(0.7, Math.min(1.8, 0.7 + lai * 0.35), 0.7);
+      _mat.compose(_pos, _quat, _scl);
+      weedMesh.setMatrixAt(count, _mat);
+    }
+    count++;
+  }
+  weedTintMesh.count = count;
+  weedTintMesh.instanceMatrix.needsUpdate = true;
+  if (weedMesh) {
+    weedMesh.count = count;
+    weedMesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 function _ensureMachineryMesh(machineType) {
-  if (machineryMesh) return machineryMesh;
+  if (machineryMesh) {
+    if (machineryMesh.material?.color) {
+      machineryMesh.material.color.setHex(
+        machineType === 'harvester' ? 0xc9a227 :
+        machineType === 'sprinkler' || machineType === 'pivot' ? 0x4aa3df :
+        0x335f35
+      );
+    }
+    return machineryMesh;
+  }
   const geo = new THREE.BoxGeometry(0.8, 0.35, 0.45);
   const mat = new THREE.MeshStandardMaterial({
-    color: machineType === 'harvester' ? 0xc9a227 : 0x335f35,
+    color: machineType === 'harvester' ? 0xc9a227 :
+      machineType === 'sprinkler' || machineType === 'pivot' ? 0x4aa3df :
+      0x335f35,
     roughness: 0.65,
     metalness: 0.05,
   });
@@ -668,11 +751,61 @@ function _ensureMachineryMesh(machineType) {
   return machineryMesh;
 }
 
+function _ensureSprinklerParticles() {
+  if (!qualityEnhanced || sprinklerSystem || !scene) return sprinklerSystem;
+  const count = 360;
+  sprinklerPositions = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const base = i * 3;
+    sprinklerPositions[base + 0] = 0;
+    sprinklerPositions[base + 1] = -999;
+    sprinklerPositions[base + 2] = 0;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(sprinklerPositions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0x58b7ff,
+    size: 0.055,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+  });
+  sprinklerSystem = new THREE.Points(geo, mat);
+  sprinklerSystem.visible = false;
+  sprinklerSystem.frustumCulled = false;
+  sprinklerSystem.userData = { count, spread: 0.55, fall: 0.12 };
+  scene.add(sprinklerSystem);
+  return sprinklerSystem;
+}
+
+function _stopSprinklerEmission() {
+  if (sprinklerSystem) sprinklerSystem.visible = false;
+}
+
+function _emitSprinklerBurst(x, y, z) {
+  if (!qualityEnhanced) return;
+  const system = _ensureSprinklerParticles();
+  if (!system || !sprinklerPositions) return;
+  const { count, spread, fall } = system.userData;
+  for (let i = 0; i < count; i++) {
+    const base = i * 3;
+    const age = (i % 24) / 24;
+    const angle = (i * 2.399963) % (Math.PI * 2);
+    const radius = spread * Math.sqrt(age);
+    sprinklerPositions[base + 0] = x + Math.cos(angle) * radius;
+    sprinklerPositions[base + 1] = Math.max(0.04, y - age * (1.8 + fall * speedMult));
+    sprinklerPositions[base + 2] = z + Math.sin(angle) * radius;
+  }
+  system.geometry.attributes.position.needsUpdate = true;
+  system.visible = true;
+}
+
 function _stopMachineryAnimation() {
   if (machineryAnim) {
     cancelAnimationFrame(machineryAnim);
     machineryAnim = null;
   }
+  _stopSprinklerEmission();
 }
 
 function _animateMachineryForDay(day) {
@@ -681,12 +814,15 @@ function _animateMachineryForDay(day) {
   const item = machinery[0];
   if (!item || !Array.isArray(item.path) || item.path.length < 2) {
     if (machineryMesh) machineryMesh.visible = false;
+    _stopSprinklerEmission();
     return;
   }
 
-  const machine = _ensureMachineryMesh(item.machine_type || 'machine');
+  const machineType = item.machine_type || 'machine';
+  const machine = _ensureMachineryMesh(machineType);
   machine.visible = true;
   machine.castShadow = qualityEnhanced;
+  const isSprinkler = machineType === 'sprinkler' || machineType === 'pivot';
 
   const path = item.path;
   const durationMs = playing ? Math.max(250, Math.round(1000 / (6 * speedMult))) : 1200;
@@ -695,7 +831,9 @@ function _animateMachineryForDay(day) {
   const placeAt = (waypoint) => {
     const x = Number(waypoint[0]) || 0.0;
     const z = Number(waypoint[1]) || 0.0;
-    machine.position.set(x, _terrainYAt(z, x) + 0.22, z);
+    const y = _terrainYAt(z, x) + 0.22;
+    machine.position.set(x, y, z);
+    if (isSprinkler) _emitSprinklerBurst(x, y + 0.28, z);
   };
 
   const tick = (now) => {
@@ -707,9 +845,12 @@ function _animateMachineryForDay(day) {
     const b = path[i + 1];
     const x = (Number(a[0]) || 0.0) + ((Number(b[0]) || 0.0) - (Number(a[0]) || 0.0)) * localT;
     const z = (Number(a[1]) || 0.0) + ((Number(b[1]) || 0.0) - (Number(a[1]) || 0.0)) * localT;
-    machine.position.set(x, _terrainYAt(z, x) + 0.22, z);
+    const y = _terrainYAt(z, x) + 0.22;
+    machine.position.set(x, y, z);
     machine.rotation.y = Math.atan2((Number(b[0]) || 0.0) - (Number(a[0]) || 0.0), (Number(b[1]) || 0.0) - (Number(a[1]) || 0.0));
+    if (isSprinkler) _emitSprinklerBurst(x, y + 0.28, z);
     if (t < 1.0) machineryAnim = requestAnimationFrame(tick);
+    else _stopSprinklerEmission();
   };
 
   placeAt(path[0]);
@@ -887,6 +1028,7 @@ function showDay(day) {
 
   _animateMachineryForDay(day);
   _updateRainForDay(day);
+  _renderWeedsForDay(day);
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,12 +1220,14 @@ function updateLegendMeta() {
   const labels = {
     biomass_g: 'Biomass (g/plant)',
     lai: 'LAI (m²/m²)',
+    weed_lai: 'Weed LAI',
     height_cm: 'Height (cm)',
     stress_index: 'Stress Index',
   };
   const gradients = {
     biomass_g: 'linear-gradient(90deg, #d4a60a, #2e8b57)',
     lai: 'linear-gradient(90deg, #8fbc00, #228b22)',
+    weed_lai: 'linear-gradient(90deg, #d9c98e, #3f7f3a)',
     height_cm: 'linear-gradient(90deg, #5599cc, #003399)',
     stress_index: 'linear-gradient(90deg, #2e8b57, #cc2200)',
   };
@@ -1211,6 +1355,8 @@ window.addEventListener('message', (event) => {
     }
     scene = null; camera = null; controls = null; mesh = null; soilMesh = null; machineryMesh = null;
     rainSystem = null; rainPositions = null; rainActiveCount = 0;
+    sprinklerSystem = null; sprinklerPositions = null;
+    weedTintMesh = null; weedMesh = null;
     frames = {}; dayMeta = {}; meta = null; terrainGrid = null; terrainRows = 0; terrainCols = 0;
     _terrainChunks = [];
 

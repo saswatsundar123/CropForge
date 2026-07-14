@@ -206,11 +206,13 @@ class StandardMaize(CropPlugin):
     def _accumulate_biomass(self, plant, env) -> None:
         ks = plant.custom.get("water_stress_ks", 1.0)
         kn = plant.custom.get("n_stress_kn", 1.0)
-        intercepted_par = (
-            env.radiation_mj_m2
-            * 0.5
-            * (1.0 - math.exp(-self.k_extinction * max(0.0, plant.lai)))
-        )
+        intercepted_par = plant.custom.get("intercepted_par_mj")
+        if intercepted_par is None:
+            intercepted_par = (
+                env.radiation_mj_m2
+                * 0.5
+                * (1.0 - math.exp(-self.k_extinction * max(0.0, plant.lai)))
+            )
         plant.biomass_g += max(0.0, self.rue * intercepted_par * ks * kn)
 
     def _partition_grain(self, plant) -> None:

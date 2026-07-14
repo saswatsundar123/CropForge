@@ -1,6 +1,7 @@
 # CropForge v0.8.0 — API Reference
 
-Auto-extracted from source docstrings. For conceptual guides see the [tutorials](../tutorials/).
+Auto-extracted from source docstrings. For conceptual guides see the tutorials
+listed in the site navigation.
 
 ---
 
@@ -26,7 +27,7 @@ The top-level simulation container. Holds one or more `Field` objects, a step re
 | Method | Signature | Description |
 |---|---|---|
 | `add_field` | `(field: Field) → None` | Register a field for simulation. |
-| `use_physics` | `(**kwargs) → None` | Enable opt-in physics engines. See [Physics Reference](#physics-use_physics). |
+| `use_physics` | `(**kwargs) → None` | Enable opt-in physics engines. See the use_physics flags below. |
 | `add_event` | `(event: Event) → None` | Schedule an agronomic event. |
 | `run` | `(days: int, season: int = 1) → None` | Execute the daily simulation loop. |
 | `visualize` | `() → None` | Launch the Dash+FastAPI dashboard. |

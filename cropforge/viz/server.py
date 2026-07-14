@@ -260,11 +260,32 @@ def create_fastapi_app(
             except Exception:
                 logger.exception("Failed to read machinery metadata from %s", machinery_dir)
 
+        weeds = []
+        weed_dir = Path(log_path) / "weed_states"
+        if weed_dir.exists():
+            try:
+                weed_df = _pq.read_table(str(weed_dir)).to_pandas()
+                if not weed_df.empty:
+                    day_series = weed_df["day"].astype(int)
+                    mask = (day_series == int(day)) & (weed_df["field_name"] == store.field_name)
+                    for rec in weed_df[mask].to_dict("records"):
+                        weeds.append({
+                            "row": int(rec.get("row", 0)),
+                            "col": int(rec.get("col", 0)),
+                            "alive": bool(rec.get("alive", True)),
+                            "lai": float(rec.get("lai", 0.0) or 0.0),
+                            "biomass_g": float(rec.get("biomass_g", 0.0) or 0.0),
+                            "species": rec.get("species", "generic_grass"),
+                        })
+            except Exception:
+                logger.exception("Failed to read weed metadata from %s", weed_dir)
+
         return JSONResponse(content={
             "day": day,
             "field_name": store.field_name,
             "precipitation_mm": precipitation_mm,
             "machinery": machinery,
+            "weeds": weeds,
         })
 
     @api.get("/api/buffer/rebuild")

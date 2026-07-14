@@ -1,69 +1,57 @@
 # Quickstart
 
-This guide reproduces the `examples/wheat_basic.py` example step by step.
-
-## 1. Prepare Input Data
-
-CropForge expects two CSV files: a weather file and a soil profile.
-See [Section 8 of the PRD](../prd.md) for the full column specification.
-
-## 2. Define the Simulation
+This example runs a tiny wheat simulation without external data files. It is
+the fastest way to confirm that CropForge is installed and that the dashboard
+can read a simulation log.
 
 ```python
-from cropforge import Farm, Field, Crop
-from cropforge.loaders import Weather, Soil
-from cropforge.runtime import step
+from cropforge import Crop, Farm, Field
+from cropforge.plugins import StandardWheat
+from cropforge.state import EnvironmentState
 
-# ---- Crop ----------------------------------------------------------------
-wheat = Crop(species="wheat", variety="HD-2967", sowing_doy=300)
 
-# ---- Field ---------------------------------------------------------------
-weather = Weather.from_csv(
-    "examples/data/weather_sample.csv",
-    date_col="date", tmax_col="tmax_c", tmin_col="tmin_c",
-    radiation_col="radiation_mj", rainfall_col="rainfall_mm",
-)
-soil = Soil.from_csv("examples/data/soil_sample.csv", apply="uniform")
+class WarmWeather:
+    def get_day(self, day: int):
+        return EnvironmentState(
+            day=day,
+            doy=day,
+            temp_max_c=30.0,
+            temp_min_c=20.0,
+            temp_mean_c=25.0,
+            radiation_mj_m2=20.0,
+            rainfall_mm=0.0,
+            et0_mm=4.0,
+            wind_speed_ms=1.0,
+            humidity_pct=60.0,
+        )
 
-field = Field(
-    "Plot A",
-    rows=20, cols=30,
-    crop=wheat,
-    spacing_m=0.2,
-    weather=weather,
-    soil=soil,
-)
 
-# ---- Custom model step ---------------------------------------------------
-@step(phase="plant", order=10)
-def grow(plant, env, soil_voxel, dt):
-    """Simple biomass accumulation driven by radiation."""
-    rad = env.get("radiation_mj", 10.0)
-    plant.biomass_g  += rad * 2.5 * dt
-    plant.height_cm  += rad * 0.08 * dt
-    plant.lai        += rad * 0.003 * dt
-    plant.lai         = min(plant.lai, 5.0)
-
-# ---- Farm ----------------------------------------------------------------
-farm = Farm("WheatBasic")
+farm = Farm("Quickstart")
+field = Field("Plot", rows=10, cols=10)
+field.set_crop(Crop(species="wheat"), sowing_density_plants_per_m2=250.0)
+field.set_weather(WarmWeather())
+field.use_plugin(StandardWheat)
 farm.add_field(field)
-farm.register_step(grow)
 
-# ---- Run -----------------------------------------------------------------
-farm.run(days=90)
-```
+farm.use_physics(radiation=True)
+farm.run(days=30)
 
-## 3. Launch the Dashboard
-
-```python
+print(farm.yield_summary())
 farm.visualize()
-# Opens http://localhost:7860 in your default browser.
-# Press Ctrl-C to stop.
 ```
 
-## 4. Interact
+## What To Try Next
 
-- **Play/Pause** the timeline at 1×, 2×, or 5× speed.
-- **Drag** the scrubber to any day.
-- **Click** any plant cylinder to open the Farm Inspector (Panel 4).
-- **Change** the colour variable (Biomass / LAI / Height / Stress) from the dropdown.
+- Add weed competition with `farm.use_physics(weed_pressure=True)` and
+  `farm.set_weed_params(...)`.
+- Change planting density with `field.set_crop(...,
+  sowing_density_plants_per_m2=...)` or `field.set_planting_config(...)`.
+- Schedule irrigation with `Event.irrigation(...)`; enhanced dashboard mode
+  animates sprinkler water particles.
+- Use `farm.visualize(quality="enhanced")` for PBR lighting, rain particles,
+  disease stress coloration, machinery animation, and first-party crop assets.
+
+## Where Output Goes
+
+Each run writes a Parquet session under `cropforge_output/`. The dashboard,
+comparison tools, and GLB exporter read from those logs.

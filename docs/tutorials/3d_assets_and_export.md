@@ -61,7 +61,7 @@ print(ModelRegistry.list_registered())
 First-party GLTF models are distributed as separate pip packages to keep the core `cropforge` package lightweight:
 
 ```bash
-# Coming in v0.9.5
+# First-party assets
 pip install cropforge-models-wheat
 ```
 
@@ -119,7 +119,9 @@ print(f"Exported: {glb_path}")
 | Plant boxes | Alive plants at the given day as coloured rectangular boxes (height = `height_cm / 100`). Dead plants are excluded. |
 
 > [!NOTE]
-> The export uses coloured boxes as a placeholder. When first-party GLTF models ship in v0.9.5, `export_scene` will embed the registered stage meshes instead.
+> First-party StandardWheat and StandardMaize GLTF assets are auto-registered.
+> If a crop or stage has no registered asset, `export_scene` keeps the cylinder
+> fallback so exports remain valid.
 
 ### Install the export dependency
 

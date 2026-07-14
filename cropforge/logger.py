@@ -73,6 +73,7 @@ PLANT_SCHEMA = pa.schema([
     pa.field("model_id",            pa.string()),   # v0.9.0: GLTF URI or "" for cylinder fallback
     pa.field("stage_progress",      pa.float32()),  # v0.9.0 Phase 2: progress in current stage [0,1]
     pa.field("disease_severity",    pa.float32()),  # v0.9.5 Phase 3: disease shader severity [0,1]
+    pa.field("sowing_density_plants_per_m2", pa.float32()),  # v1.0.0: yield scaling metadata
     pa.field("custom_json",         pa.string()),
 ])
 
@@ -120,6 +121,17 @@ MACHINERY_SCHEMA = pa.schema([
     pa.field("path_json",      pa.string()),
 ])
 
+WEED_SCHEMA = pa.schema([
+    pa.field("day",        pa.int32()),
+    pa.field("field_name", pa.string()),
+    pa.field("row",        pa.int16()),
+    pa.field("col",        pa.int16()),
+    pa.field("alive",      pa.bool_()),
+    pa.field("lai",        pa.float32()),
+    pa.field("biomass_g",  pa.float32()),
+    pa.field("species",    pa.string()),
+])
+
 
 # ---------------------------------------------------------------------------
 # StateLogger
@@ -165,6 +177,7 @@ class StateLogger:
         self._soil_rows:    List[Dict[str, Any]] = []
         self._env_rows:     List[Dict[str, Any]] = []
         self._machinery_rows: List[Dict[str, Any]] = []
+        self._weed_rows: List[Dict[str, Any]] = []
 
         # Track whether anything has been written yet (for partial flush logic)
         self._flushed_days: int = 0
@@ -208,6 +221,9 @@ class StateLogger:
                 "model_id":           plant.model_id,
                 "stage_progress":     float(plant.stage_progress),
                 "disease_severity":   float(plant.disease_severity),
+                "sowing_density_plants_per_m2": float(
+                    getattr(plant, "sowing_density_plants_per_m2", 1.0)
+                ),
                 "custom_json":        json.dumps(plant.custom),
             })
 
@@ -272,6 +288,22 @@ class StateLogger:
                 "path_json":    json.dumps(item.get("path", [])),
             })
 
+        if getattr(state, "weed_grid", None):
+            for row in state.weed_grid:
+                for weed in row:
+                    if weed is None:
+                        continue
+                    self._weed_rows.append({
+                        "day":        day,
+                        "field_name": field_name,
+                        "row":        weed.row,
+                        "col":        weed.col,
+                        "alive":      weed.alive,
+                        "lai":        float(weed.lai),
+                        "biomass_g":  float(weed.biomass_g),
+                        "species":    weed.species,
+                    })
+
     # ------------------------------------------------------------------
     # Write to Parquet
     # ------------------------------------------------------------------
@@ -325,15 +357,22 @@ class StateLogger:
             subdir="machinery",
             file_meta=file_meta,
         )
+        self._write_table(
+            rows=self._weed_rows,
+            schema=WEED_SCHEMA,
+            subdir="weed_states",
+            file_meta=file_meta,
+        )
 
         self._flushed_days = len(set(r["day"] for r in self._env_rows))
         logger.info(
             "StateLogger flushed %d plant-rows, %d soil-rows, %d env-rows, "
-            "%d machinery-rows -> %s",
+            "%d machinery-rows, %d weed-rows -> %s",
             len(self._plant_rows),
             len(self._soil_rows),
             len(self._env_rows),
             len(self._machinery_rows),
+            len(self._weed_rows),
             self.output_dir,
         )
 
@@ -403,5 +442,6 @@ class StateLogger:
             f"plant_rows={len(self._plant_rows)}, "
             f"soil_rows={len(self._soil_rows)}, "
             f"env_rows={len(self._env_rows)}, "
-            f"machinery_rows={len(self._machinery_rows)})"
+            f"machinery_rows={len(self._machinery_rows)}, "
+            f"weed_rows={len(self._weed_rows)})"
         )

@@ -31,7 +31,7 @@ DUMMY_GLTF = "tests/assets/dummy_plant.gltf"
 
 ModelRegistry.register(
     species="Triticum aestivum",
-    stage="emergence",          # stage index 1 in StandardWheat._STAGE_ORDER
+    stage=1,               # stage index 1 = emergence in StandardWheat._STAGE_ORDER
     gltf_path=DUMMY_GLTF,
 )
 print("Model registry:", ModelRegistry.list_registered())
@@ -70,8 +70,7 @@ terrain = Terrain.procedural(
 )
 land_prep = RidgeFurrow(
     ridge_height_m=0.15,
-    furrow_width_m=0.6,
-    row_spacing_m=0.75,
+    ridge_spacing_m=0.75,
 )
 
 field = Field("Plot_A", rows=20, cols=30)
@@ -82,13 +81,12 @@ field.use_plugin(StandardWheat)
 
 farm.add_field(field)
 
-# Enable physics (soil_water_balance is enough to make the terrain meaningful)
-@farm.use_physics(
+# Enable physics (water_balance drives terrain-feedback and ET0)
+farm.use_physics(
     et0=True,
-    soil_water_balance=True,
+    water_balance=True,
     erosion=True,
 )
-def _(f): pass
 
 # ---------------------------------------------------------------------------
 # 4. Run 15 days
@@ -101,7 +99,7 @@ print(f"Simulation complete. Log: {farm._last_log_path}")
 # 5. Export GLB scene
 # ---------------------------------------------------------------------------
 glb_path = farm.export_scene(day=15, filepath="wheat_trial_day15.glb")
-print(f"GLB exported → {glb_path}")
+print(f"GLB exported -> {glb_path}")
 print("Open wheat_trial_day15.glb in Blender / Unreal Engine 5 for offline render.")
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,13 @@
 site_name: CropForge
 site_description: Open-source, code-first virtual farm runtime for agricultural researchers
 site_url: https://cropforge.readthedocs.io
-repo_url: https://github.com/saswatsundar123/cropforge
-repo_name: saswatsundar123/cropforge
+repo_url: https://github.com/saswatsundar123/CropForge
+repo_name: saswatsundar123/CropForge
 
 theme:
   name: material
+  logo: assets/CropForge_Logo.png
+  favicon: assets/favicon/favicon-32x32.png
   palette:
     - scheme: slate
       primary: teal
@@ -38,6 +40,7 @@ nav:
     - Installation: getting_started/installation.md
     - Quickstart: getting_started/quickstart.md
   - Reference:
+    - API Overview: reference/api.md
     - Crop: reference/crop.md
     - Farm & Field: reference/farm.md
     - Runtime: reference/runtime.md
@@ -48,12 +51,20 @@ nav:
     - Events: reference/events.md
   - Features:
     - Opt-In Physics: features/physics.md
+    - Terrain: features/terrain.md
     - Visual Engine: features/visual_engine.md
   - Plugins:
     - Official Plugins: plugins.md
   - Tutorials:
     - Maize Dual-Plot: tutorials/maize_dual_plot.md
     - Irrigation Trial & Slope Leaching: tutorials/irrigation_and_leaching.md
+    - Terrain & Land Prep: tutorials/terrain_and_land_prep.md
+    - Conservation Agriculture: tutorials/conservation_agriculture.md
+    - Geomorphology: tutorials/geomorphology.md
+    - 3D Assets & Export: tutorials/3d_assets_and_export.md
+    - Weed Management: tutorials/weed_management.md
+    - Planting Density: tutorials/planting_density.md
+    - Irrigation Animation: tutorials/irrigation_animation.md
     - Disease Modeling: tutorials/disease_modeling.md
     - Multi-Season Rotation: tutorials/multi_season_rotation.md
   - PRD: prd.md

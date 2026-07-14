@@ -1,11 +1,11 @@
 """
 examples/slope_leaching_trial.py
 ==================================
-PRD v0.3.0 — Slope N Leaching Trial (The Crucible)
+PRD v0.3.0 -- Slope N Leaching Trial (The Crucible)
 
 Scientific Scenario
 -------------------
-A 3×3 grid field with a distinct North-to-South elevation gradient
+A 3x3 grid field with a distinct North-to-South elevation gradient
 (upper cells at 5 m, lower cells at 0 m). A single heavy fertilizer
 event (120 kg N/ha) is applied uniformly on day 1. A high-rainfall
 event (80 mm on day 3) drives saturated surface runoff, causing
@@ -63,7 +63,7 @@ class SlopeWeather:
 # ---------------------------------------------------------------------------
 
 INITIAL_N_KG_HA = 120.0
-INITIAL_MOISTURE = 38.0   # above FC=30% → ensures saturation triggers runoff after rain
+INITIAL_MOISTURE = 38.0   # above FC=30% -> ensures saturation triggers runoff after rain
 
 class LoamSoil:
     """Single-layer loam soil with uniform N across all cells."""
@@ -92,8 +92,8 @@ class LoamSoil:
 def run_slope_leaching_trial() -> dict:
     """Run the slope leaching trial and return final N grid."""
     print("=" * 65)
-    print("  CropForge v0.3.0 — Slope N Leaching Trial")
-    print("  3×3 grid | North-to-South elevation gradient")
+    print("  CropForge v0.3.0 -- Slope N Leaching Trial")
+    print("  3x3 grid | North-to-South elevation gradient")
     print("=" * 65)
 
     farm = Farm(name="SlopeTrial", location=(23.5, 77.0))
@@ -106,9 +106,9 @@ def run_slope_leaching_trial() -> dict:
     # North-to-South slope: row 0 is highest (5 m), row 2 is lowest (0 m)
     # Columns are uniform in elevation within each row
     dem = np.array([
-        [5.0, 5.0, 5.0],   # row 0 — upslope
-        [2.5, 2.5, 2.5],   # row 1 — mid-slope
-        [0.0, 0.0, 0.0],   # row 2 — downslope / receiving
+        [5.0, 5.0, 5.0],   # row 0 -- upslope
+        [2.5, 2.5, 2.5],   # row 1 -- mid-slope
+        [0.0, 0.0, 0.0],   # row 2 -- downslope / receiving
     ], dtype=float)
     field.set_elevation(dem)
 
@@ -156,7 +156,7 @@ def run_slope_leaching_trial() -> dict:
     print()
     for r in range(3):
         row_str = "  ".join(f"{n_grid[r][c]:7.2f}" for c in range(3))
-        label = ["↑ upslope  ", "  mid-slope", "↓ downslope"][r]
+        label = ["^ upslope  ", "  mid-slope", "v downslope"][r]
         print(f"  Row {r} [{label}]:  {row_str}  kg/ha")
 
     # Summary stats
@@ -172,7 +172,7 @@ def run_slope_leaching_trial() -> dict:
     spatial_differentiation = bottom_n > top_n
     print("\n" + "=" * 65)
     print("  Spatial N differentiation (downslope > upslope):")
-    print(f"  {'CONFIRMED ✓' if spatial_differentiation else 'NOT OBSERVED ✗'}")
+    print(f"  {'CONFIRMED OK' if spatial_differentiation else 'NOT OBSERVED FAIL'}")
     print("=" * 65)
 
     return {

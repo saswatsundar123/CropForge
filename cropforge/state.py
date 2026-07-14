@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import numpy as np
 
 if TYPE_CHECKING:
+    from cropforge.physics.weeds import WeedState
     from cropforge.terrain import Terrain
 
 
@@ -72,6 +73,10 @@ class PlantState:
     # Mirrors the v0.5 disease engine's progressive disease_stress value.
     disease_severity: float = 0.0
 
+    # v1.0.0 -- representative-plant scaling metadata. Crop growth physics
+    # still treats this object as one representative plant per cell.
+    sowing_density_plants_per_m2: float = 1.0
+
     # v0.2.0 -- root impedance multiplier (PRD v0.2.0 Section 5.3)
     # 1.0 = unrestricted, 0.0 = hard pan block.
     # Engine-set when use_physics(root_impedance=True); stays 1.0 otherwise.
@@ -108,6 +113,35 @@ class SoilVoxelState:
 
 
 # ---------------------------------------------------------------------------
+# v1.0.0  PlantingConfig
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PlantingConfig:
+    """Planting geometry used for yield scaling and visual density."""
+
+    pattern: str = "rows"
+    row_spacing_m: float = 0.25
+    plant_spacing_m: float = 0.10
+    plants_per_m2: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.pattern not in {"rows", "broadcast", "hexagonal"}:
+            raise ValueError(
+                "PlantingConfig.pattern must be one of "
+                "'rows', 'broadcast', or 'hexagonal'."
+            )
+        if self.row_spacing_m <= 0:
+            raise ValueError("PlantingConfig.row_spacing_m must be positive.")
+        if self.plant_spacing_m <= 0:
+            raise ValueError("PlantingConfig.plant_spacing_m must be positive.")
+        if self.plants_per_m2 < 0:
+            raise ValueError("PlantingConfig.plants_per_m2 cannot be negative.")
+        if self.plants_per_m2 == 0.0:
+            self.plants_per_m2 = 1.0 / (self.row_spacing_m * self.plant_spacing_m)
+
+
+# ---------------------------------------------------------------------------
 # 5.3  FieldState
 # ---------------------------------------------------------------------------
 
@@ -124,6 +158,8 @@ class FieldState:
     # v0.6.0 -- terrain geometry (PRD v0.6.0 §5.6)
     # None means flat field -- zero behaviour change from v0.5.0.
     terrain: Optional["Terrain"] = None
+    weed_grid: List[List[Optional["WeedState"]]] = field(default_factory=list)
+    planting_config: Optional[PlantingConfig] = None
 
     custom: Dict[str, Any] = field(default_factory=dict)
 

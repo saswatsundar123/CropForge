@@ -231,6 +231,13 @@ class BufferStore:
         if variable in plants_df.columns:
             vmin = float(plants_df[variable].min())
             vmax = float(plants_df[variable].max())
+        elif "custom_json" in plants_df.columns:
+            values = [
+                float(_parse_custom_json(v).get(variable, 0.0) or 0.0)
+                for v in plants_df["custom_json"]
+            ]
+            vmin = min(values) if values else 0.0
+            vmax = max(values) if values else 1.0
         else:
             vmin, vmax = 0.0, 1.0
 
@@ -322,7 +329,8 @@ class BufferStore:
                     half_h   = height_w / 2.0
 
                     if alive:
-                        val = float(rec.get(variable, 0.0) or 0.0)
+                        custom_for_colour = _parse_custom_json(rec.get("custom_json", ""))
+                        val = float(rec.get(variable, custom_for_colour.get(variable, 0.0)) or 0.0)
                         r_c, g_c, b_c = _value_to_rgb(val, vmin, vmax, variable)
                     else:
                         r_c, g_c, b_c = _DEAD_R, _DEAD_G, _DEAD_B

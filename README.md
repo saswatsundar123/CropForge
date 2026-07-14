@@ -1,5 +1,9 @@
 # CropForge
 
+<p align="center">
+  <img src="docs/assets/CropForge_Logo_Text.png" alt="CropForge" width="560">
+</p>
+
 [![PyPI version](https://badge.fury.io/py/cropforge.svg)](https://badge.fury.io/py/cropforge)
 [![Tests](https://github.com/saswatsundar123/cropforge/actions/workflows/publish.yml/badge.svg)](https://github.com/saswatsundar123/cropforge/actions)
 [![Docs](https://readthedocs.org/projects/cropforge/badge/?version=latest)](https://cropforge.readthedocs.io)
@@ -10,6 +14,17 @@ CropForge lets you define a crop simulation entirely in Python. You write the mo
 ```bash
 pip install cropforge
 ```
+
+---
+
+## What's New in v1.0.0 - Community Release
+
+v1.0.0 adds opt-in Weed Competition, Planting Density and `yield_summary()`,
+Irrigation Animation, a Yield Metrics dashboard panel, citation metadata,
+Zenodo metadata, issue templates, and community contribution governance.
+
+> Intercropping is intentionally deferred to v1.1.0 so the v1.0.0 API can stay
+> stable for publication and early adopters.
 
 ---
 
@@ -52,7 +67,7 @@ farm.export_scene(day=45, filepath="output/farm_day45.glb")
 # pip install cropforge[export]  required
 ```
 
-The dashboard also provides a one-click **⬇ Export 3D Scene (.glb)** button.
+The dashboard also provides a one-click **Export 3D Scene (.glb)** button.
 
 ### High-Resolution Plotly Terrain
 
@@ -138,7 +153,7 @@ farm.run(days=90)
 farm.visualize()
 ```
 
-See `examples/digital_twin_full_lifecycle.py` for the complete v0.9.5 capstone example.
+See `examples/digital_twin_full_lifecycle.py` for the complete visual capstone example.
 See `examples/photorealistic_twin_trial.py` for the v0.9.0 visual export example.
 See `examples/conservation_ag_trial.py` and `examples/submetre_performance_trial.py` for v0.8.0 examples.
 
@@ -170,6 +185,30 @@ See `examples/conservation_ag_trial.py` and `examples/submetre_performance_trial
 ## Documentation
 
 Full documentation at [cropforge.readthedocs.io](https://cropforge.readthedocs.io).
+
+## Citing CropForge
+
+If you use CropForge in academic work, please cite the software. The repository
+includes `CITATION.cff`, which GitHub and Zenodo can read directly.
+
+JOSS-style software citation:
+
+> Rath, S. S. (2026). CropForge: A Python-first virtual farm runtime for crop
+> simulation, spatial physics, and 3D agronomic digital twins. Version 1.0.0.
+> https://github.com/saswatsundar123/cropforge
+
+BibTeX:
+
+```bibtex
+@software{rath_2026_cropforge,
+  author  = {Rath, Saswat Sundar},
+  title   = {CropForge},
+  version = {1.0.0},
+  year    = {2026},
+  url     = {https://github.com/saswatsundar123/cropforge},
+  license = {MIT}
+}
+```
 
 ## Licence
 

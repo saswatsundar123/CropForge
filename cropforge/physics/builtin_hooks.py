@@ -51,6 +51,7 @@ PHASE_ROOT_ENGINE       = -1   # Root impedance multiplier
 PHASE_RADIATION_ENGINE  = -2   # Radiation interception (same phase as ET0; runs per-plant)
 PHASE_WIND_ENGINE       = -2   # Topographical wind field (same phase; writes env.custom grid)
 PHASE_DISEASE_ENGINE    = -1   # Spatial SIR disease spread (same phase as root; per-plant)
+PHASE_WEED_ENGINE       = -1   # Weed competition (opt-in; water + PAR suppression)
 PHASE_ROOT_CLAMP        = +1   # Root depth clamping (PRD v0.7.0 §7.3) — runs AFTER all plugins
 PHASE_CLOD_ENGINE       = -4   # Clod dynamics / roughness decay (PRD v0.7.0 §7.4)
 PHASE_EROSION_ENGINE    = -2   # Soil erosion index (PRD v0.7.0 §7.5); runs after hydrology (-3)
@@ -924,6 +925,64 @@ def make_radiation_hook(
 
     _radiation_step.__name__ = "_radiation_step"
     return _radiation_step
+
+
+# ---------------------------------------------------------------------------
+# Hook 6b: Weed Competition Engine  (PRD v1.0.0 §3)
+# ---------------------------------------------------------------------------
+
+def make_weed_hook(params):
+    """Return the opt-in weed competition hook."""
+    import numpy as _np
+
+    from cropforge.physics.weeds import (
+        compute_weed_radiation_suppression,
+        step_weeds,
+    )
+
+    def _weed_step(state: "FieldState", env: "EnvironmentState") -> "FieldState":
+        if not getattr(state, "weed_grid", None):
+            return state
+        active_params = state.custom.get("_weed_params", params)
+
+        rng = getattr(state, "_weed_rng", None)
+        if rng is None:
+            seed = int(state.custom.get("_weed_seed", 1009))
+            rng = _np.random.default_rng(seed)
+            setattr(state, "_weed_rng", rng)
+
+        step_weeds(
+            weed_grid=state.weed_grid,
+            soil_grid=state.soil,
+            plant_grid=state.plants,
+            env=env,
+            params=active_params,
+            doy=env.doy,
+            rng=rng,
+        )
+
+        if env.doy >= active_params.emergence_doy:
+            suppression = compute_weed_radiation_suppression(
+                state.weed_grid,
+                state.plants,
+                active_params.competitive_index,
+            )
+            state.custom["weed_radiation_suppression"] = suppression.tolist()
+            for plant in state.plants:
+                factor = float(suppression[plant.row, plant.col])
+                plant.custom["weed_radiation_suppression"] = factor
+                if "intercepted_par_mj" in plant.custom:
+                    plant.custom["intercepted_par_mj"] *= factor
+                weed = state.weed_grid[plant.row][plant.col]
+                plant.custom["weed_lai"] = float(weed.lai) if weed and weed.alive else 0.0
+                plant.custom["weed_density_m2"] = (
+                    float(active_params.initial_density_m2) if weed and weed.alive else 0.0
+                )
+
+        return state
+
+    _weed_step.__name__ = "_weed_step"
+    return _weed_step
 
 
 # ---------------------------------------------------------------------------

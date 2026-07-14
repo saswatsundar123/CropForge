@@ -1,7 +1,7 @@
 """
 examples/maize_dual_plot_v2.py
 ================================
-CropForge v0.5.0 — Maize Dual-Plot Crucible (Plugin Edition)
+CropForge v0.5.0 -- Maize Dual-Plot Crucible (Plugin Edition)
 
 Same dual-plot hard-pan scenario as maize_dual_plot.py, but the root-
 impedance clamping and water-stress logic are now encapsulated inside
@@ -12,7 +12,7 @@ Demonstrates:
 
 Expected outcomes are identical to maize_dual_plot.py:
     Plot A max root depth > 19 cm  (no hard pan)
-    Plot B max root depth ≤ 19 cm  (hard pan at 19 cm blocks growth)
+    Plot B max root depth <= 19 cm  (hard pan at 19 cm blocks growth)
 
 Usage::
     python examples/maize_dual_plot_v2.py
@@ -95,7 +95,7 @@ field_b.use_plugin(StandardMaize)
 # Run
 # ---------------------------------------------------------------------------
 print("=" * 60)
-print("CropForge v0.5.0 — Maize Dual-Plot Crucible (Plugin Edition)")
+print("CropForge v0.5.0 -- Maize Dual-Plot Crucible (Plugin Edition)")
 print("=" * 60)
 print(f"  Plot A: {field_a.name}  ({GRID_ROWS}x{GRID_COLS} grid, slope 2%)")
 print(f"  Plot B: {field_b.name}  ({GRID_ROWS}x{GRID_COLS} grid, hard pan at 19cm)")
@@ -122,4 +122,4 @@ for fname, field in [("Plot_A_Slope", field_a), ("Plot_B_Hardpan", field_b)]:
 
 print()
 print(f"Expected: Plot A max root > {HARD_PAN_DEPTH_CM} cm")
-print(f"Expected: Plot B max root ≤ {HARD_PAN_DEPTH_CM} cm")
+print(f"Expected: Plot B max root <= {HARD_PAN_DEPTH_CM} cm")

@@ -4,7 +4,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CropForge 3D Viewport</title>
+  <title>CropForge Dashboard</title>
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png" />
+  <link rel="manifest" href="favicon/site.webmanifest" />
+  <link rel="shortcut icon" href="favicon/favicon.ico" />
   <style>
     * {
       margin: 0;
@@ -36,6 +41,17 @@
     #loader.hidden {
       opacity: 0;
       pointer-events: none;
+    }
+
+    #loader-logo {
+      width: 84px;
+      height: 84px;
+      object-fit: contain;
+      border-radius: 20px;
+      background: #FFFFFF;
+      padding: 9px;
+      margin-bottom: 18px;
+      filter: drop-shadow(0 8px 22px rgba(17, 17, 17, 0.18));
     }
 
     #loader-title {
@@ -229,11 +245,12 @@
 
   <!-- Loading screen -->
   <div id="loader">
-    <div id="loader-title">CropForge 3D Viewport</div>
+    <img id="loader-logo" src="CropForge_Logo.png" alt="CropForge logo" />
+    <div id="loader-title">CropForge Dashboard</div>
     <div id="loader-bar-track">
       <div id="loader-bar-fill"></div>
     </div>
-    <div id="loader-status">Initialising…</div>
+    <div id="loader-status">Initialising...</div>
   </div>
 
   <!-- Three.js canvas -->
@@ -250,6 +267,7 @@
     <select id="var-select">
       <option value="biomass_g">Biomass (g)</option>
       <option value="lai">LAI</option>
+      <option value="weed_lai">Weed LAI</option>
       <option value="height_cm">Height (cm)</option>
       <option value="stress_index">Stress Index</option>
     </select>
@@ -276,7 +294,7 @@
     <button id="btn-2x">2×</button>
     <button id="btn-5x">5×</button>
     <span id="speed-label">Speed</span>
-    <button id="btn-export-glb" title="Download current day as .glb">⬇ Export GLB</button>
+    <button id="btn-export-glb" title="Download current day as .glb">Export GLB</button>
   </div>
 
   <!-- Three.js r152 from CDN (offline users: replace with local copy) -->

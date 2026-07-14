@@ -54,10 +54,10 @@ work together from the same compute-first Parquet pipeline.
 - **PBR rendering** — `farm.visualize(quality="enhanced")` activates `MeshStandardMaterial` on terrain (roughness 0.9) and plants (roughness 0.6), shadow casting from a sun-angle directional light, and SSAO. `quality="standard"` (default) is bit-identical to v0.8.0.
 - **Per-stage InstancedMesh routing** — Three.js maintains a dict of `InstancedMesh`es keyed by `model_index`. Each day, plants are dispatched to the correct mesh; registered GLTF models replace the cylinder for that stage.
 - **GLTF scene export (Python)** — `farm.export_scene(day, filepath, field)` writes a valid binary GLB containing the simulation terrain and alive plant geometry (coloured boxes). Requires `pip install cropforge[export]` (`pygltflib>=1.16`).
-- **GLTF scene export (frontend)** — "⬇ Export 3D Scene (.glb)" button in the dashboard topbar. Uses Three.js `GLTFExporter` to capture the live scene and trigger a browser download.
+- **GLTF scene export (frontend)** — "Export 3D Scene (.glb)" button in the dashboard topbar. Uses Three.js `GLTFExporter` to capture the live scene and trigger a browser download.
 - **Plotly terrain 4× upsampling** — The `go.Surface` terrain chart applies `scipy.ndimage.zoom(order=3)` to elevation and `zoom(order=1)` to the colour overlay before display. Physics data is never modified. `z` and `surfacecolor` are guaranteed to match shape.
 - **PBR terrain lighting in Plotly** — `go.Surface` now uses `lighting=dict(roughness=0.9, specular=0.1, ambient=0.7)` for matte-soil aesthetics. Axis grid lines, tick labels, and backgrounds are hidden for a clean digital-twin look.
-- **Collapsible sidebars** — "◀ L" and "R ▶" toggle buttons in the topbar collapse left/right sidebar panels to give the 3D viewport the full screen.
+- **Collapsible sidebars** — "L" and "R" toggle buttons in the topbar collapse left/right sidebar panels to give the 3D viewport the full screen.
 - **`Mulching` land prep** — Cover fraction, evaporation reduction, C-factor modification.
 - **`BroadBedFurrow` land prep** — BBF geometry with P factor = 0.45.
 - **`terrain_feedback` flag** — `@farm.use_physics(terrain_feedback=True/False)` controls whether the elevation grid updates daily from net sediment flux.

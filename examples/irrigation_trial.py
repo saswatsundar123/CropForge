@@ -1,14 +1,14 @@
 """
 examples/irrigation_trial.py
 ==============================
-PRD v0.3.0 Tutorial — Full Irrigation Trial (PRD §7.3)
+PRD v0.3.0 Tutorial -- Full Irrigation Trial (PRD sec.7.3)
 
 Scientific Scenario
 -------------------
 90-day maize season. Two plots on the same farm:
 
-  Plot_A_Rainfed  — no supplemental irrigation, rainfed only
-  Plot_B_Irrigated — supplemental irrigation every 15 days (50 mm/event)
+  Plot_A_Rainfed  -- no supplemental irrigation, rainfed only
+  Plot_B_Irrigated -- supplemental irrigation every 15 days (50 mm/event)
 
 Both plots receive:
   - Identical weather (monsoon season, hot/dry periods)
@@ -16,7 +16,7 @@ Both plots receive:
   - Identical fertilizer at day 20 (80 kg N/ha basal application)
   - Full physics: ET0 + water balance + N transport
 
-Expected outcome (PRD §7.3):
+Expected outcome (PRD sec.7.3):
   Stress divergence by day 45:
     rainfed plot stress_index > 0.4 (cumulative drought stress)
     irrigated plot stress_index < 0.15 (adequately supplied)
@@ -48,7 +48,7 @@ from cropforge.state import EnvironmentState, SoilVoxelState
 
 
 # ---------------------------------------------------------------------------
-# Weather source — simplified monsoon/dry-season schedule
+# Weather source -- simplified monsoon/dry-season schedule
 # ---------------------------------------------------------------------------
 
 class MonsoonWeather:
@@ -93,7 +93,7 @@ class MonsoonWeather:
 # ---------------------------------------------------------------------------
 
 class SandyLoamSoil:
-    """Sandy loam 2-layer profile (0–20 cm, 20–40 cm)."""
+    """Sandy loam 2-layer profile (0-20 cm, 20-40 cm)."""
 
     def build_grid(self, rows: int, cols: int):
         return [
@@ -128,7 +128,7 @@ class SandyLoamSoil:
 
 def run_irrigation_trial() -> None:
     print("=" * 65)
-    print("  CropForge v0.3.0 — Irrigation Trial")
+    print("  CropForge v0.3.0 -- Irrigation Trial")
     print("  90-day maize | Plot_A_Rainfed vs Plot_B_Irrigated")
     print("=" * 65)
 
@@ -177,10 +177,10 @@ def run_irrigation_trial() -> None:
     # --- Events ---
     # Fertiliser at day 20 on both plots (80 kg N/ha top-dress)
     farm.add_event(Event.fertiliser(
-        field="Plot_A_Rainfed", day=20, amount_kg_ha=80, layer=0
+        field="Plot_A_Rainfed", day=20, n_kg_ha=80, apply_to_layer=0
     ))
     farm.add_event(Event.fertiliser(
-        field="Plot_B_Irrigated", day=20, amount_kg_ha=80, layer=0
+        field="Plot_B_Irrigated", day=20, n_kg_ha=80, apply_to_layer=0
     ))
 
     # Irrigation every 15 days on Plot B only (50 mm/event)
@@ -237,15 +237,15 @@ def run_irrigation_trial() -> None:
         mb = moisture_b.get(day, 0.0)
         print(f"{day:>4}  {sa:>8.4f}  {ma:>7.2f}%  {sb:>8.4f}  {mb:>7.2f}%  {sa-sb:>+8.4f}")
 
-    # --- PRD §7.3 verification ---
+    # --- PRD sec.7.3 verification ---
     stress_a_day45 = stress_a.get(45, 0.0)
     stress_b_day45 = stress_b.get(45, 0.0)
     print("\n" + "=" * 65)
-    print("  PRD §7.3 Verification (day 45)")
+    print("  PRD sec.7.3 Verification (day 45)")
     print(f"  Rainfed stress_index  = {stress_a_day45:.4f}  (target > 0.15)")
     print(f"  Irrigated stress_index= {stress_b_day45:.4f}  (target < 0.30)")
     diverged = stress_a_day45 > stress_b_day45
-    print(f"  Stress divergence: {'CONFIRMED ✓' if diverged else 'NOT OBSERVED ✗'}")
+    print(f"  Stress divergence: {'CONFIRMED OK' if diverged else 'NOT OBSERVED FAIL'}")
     print("=" * 65)
 
 

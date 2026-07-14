@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use CropForge in academic work, please cite the software using this metadata."
+title: "CropForge"
+version: "1.0.0"
+date-released: "2026-07-14"
+repository-code: "https://github.com/saswatsundar123/cropforge"
+url: "https://cropforge.readthedocs.io"
+license: "MIT"
+authors:
+  - family-names: "Rath"
+    given-names: "Saswat Sundar"
+    affiliation: "ICAR-IARI Jharkhand"
+keywords:
+  - crop simulation
+  - agronomy
+  - digital twin
+  - precision agriculture
+  - soil physics
+  - Python

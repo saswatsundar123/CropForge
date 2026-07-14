@@ -7,6 +7,14 @@ define, run, and visualise virtual farm experiments as pure Python code.
 
 ## Key Features
 
+- v1.0.0 release-ready API with citation metadata, contribution templates, and
+  publication-focused governance.
+- Opt-in weed competition with weed spread, water competition, radiation
+  suppression, Parquet logging, and dashboard overlays.
+- Planting density metadata and `farm.yield_summary()` for kg/ha and total
+  yield reporting.
+- Irrigation event logging and enhanced-mode sprinkler animation.
+
 - **Code-first**: Define crops, fields, and management events in Python — no
   configuration files, no GUIs required.
 - **Opt-In Physics** (v0.2.0): Built-in, mathematically verified FAO-56 ET0 and root impedance physics that seamlessly integrate with custom scripts.
