@@ -1,15 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CropForge Dashboard</title>
-  <link rel="apple-touch-icon" sizes="180x180" href="favicon/apple-touch-icon.png" />
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon/favicon-32x32.png" />
-  <link rel="icon" type="image/png" sizes="16x16" href="favicon/favicon-16x16.png" />
-  <link rel="manifest" href="favicon/site.webmanifest" />
-  <link rel="shortcut icon" href="favicon/favicon.ico" />
+  <link rel="icon" type="image/png" href="favicon.png" />
   <style>
     * {
       margin: 0;
@@ -258,8 +254,8 @@
 
   <!-- HUD -->
   <div id="hud">
-    <div id="hud-day">Day —</div>
-    <div id="hud-info">—</div>
+    <div id="hud-day">Day -</div>
+    <div id="hud-info">-</div>
   </div>
 
   <!-- Colour variable selector -->
@@ -279,7 +275,7 @@
     <div id="legend-bar"></div>
     <div id="legend-labels">
       <span id="legend-min">0</span>
-      <span id="legend-max">—</span>
+      <span id="legend-max">-</span>
     </div>
     <div id="legend-dead">
       <div id="legend-dead-swatch"></div>
@@ -289,15 +285,18 @@
 
   <!-- Playback controls -->
   <div id="controls">
-    <button id="btn-play" class="active">&#9654; Play</button>
-    <button id="btn-1x">1×</button>
-    <button id="btn-2x">2×</button>
-    <button id="btn-5x">5×</button>
+    <button id="btn-play" class="active">Play</button>
+    <button id="btn-1x">1x</button>
+    <button id="btn-2x">2x</button>
+    <button id="btn-5x">5x</button>
     <span id="speed-label">Speed</span>
     <button id="btn-export-glb" title="Download current day as .glb">Export GLB</button>
   </div>
 
-  <!-- Three.js r152 from CDN (offline users: replace with local copy) -->
+  <script src="parent_sanitize.js?v=20260714e"></script>
+  <script src="fallback.js?v=20260714e"></script>
+
+  <!-- Three.js r152 from CDN; fallback.js handles offline/blocked CDN cases. -->
   <script type="importmap">
   {
     "imports": {
@@ -306,8 +305,15 @@
     }
   }
   </script>
-  <script type="module" src="main.js"></script>
+  <script
+    type="module"
+    src="main.js?v=20260714e"
+    onerror="if(window.CropForgeFallback){window.CropForgeFallback.start('Three.js module load error');}"
+  ></script>
 
 </body>
 
 </html>
+
+
+

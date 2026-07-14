@@ -6,6 +6,56 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.0.1] - 2026-07-14
+
+v1.0.1 is the first stable release of CropForge. The visual arc is complete,
+all known rendering regressions are resolved, and the example suite runs
+clean end-to-end.
+
+### Fixed
+
+- **3D plants now grow vertically** (was: sideways/horizontal in Three.js r152).
+  Root causes eliminated:
+  - `MeshPhysicalMaterial` on `InstancedMesh` corrupts per-instance normal/tangent
+    matrices in r152 — replaced with `MeshStandardMaterial` (no visual regression,
+    no `transmission` dependency).
+  - GLTF Z-up to Y-up rotation was discarded when cloning geometry for instancing;
+    now baked in via `geo.applyMatrix4(child.matrixWorld)`.
+  - `OutputPass` (Three.js r158+ only) was imported against r152 CDN, causing a
+    silent 404 that triggered the 2D fallback; replaced with
+    `ShaderPass(GammaCorrectionShader)` (r152-compatible).
+- **Terrain glow removed** — bloom pass strength reduced and threshold raised so
+  only bright canopy tops fire, not the soil mesh.
+- `examples/irrigation_trial.py` — fixed broken field-detection logic
+  (`plant_id.startswith()` never matched `r00c00`-format IDs); replaced with a
+  single step that tracks field call-order per day.
+- `examples/disease_outbreak_trial.py` — fixed `UnicodeEncodeError` crash on
+  Windows cp1252 consoles caused by emoji in `print_disease_snapshot`; replaced
+  with ASCII delimiters.
+
+### Added
+
+- `cropforge/viz/static/fallback.js` — offline / CDN-blocked fallback renderer.
+- `cropforge/viz/static/parent_sanitize.js` — cross-origin iframe message sanitizer.
+- `examples/disease_outbreak_trial.py` now calls `farm.visualize(quality="enhanced")`
+  at the end so the dashboard launches automatically on the disease run.
+
+### Changed
+
+- Project version bumped to `1.0.1`.
+- Repo root cleaned: removed `emoji_hits.txt`, `cropforge_crash.log`,
+  `mid_season_export.glb`, `wheat_trial_day15.glb`, and all `__pycache__` /
+  `.pytest_cache` directories from tracked files.
+
+### Tested
+
+- `wheat_basic_v2.py` — 600 plants, 90 days, all alive, biomass 316.29 g/plant.
+- `disease_outbreak_trial.py` — 900 plants, 90 days, wind anisotropy E/W ratio
+  2.50x confirmed.
+- `irrigation_trial.py` — dual-field stress divergence simulation runs clean.
+
+---
+
 ## [0.9.5] - 2026-07-09
 
 v0.9.5 completes the CropForge visual architecture arc: bundled crop assets,

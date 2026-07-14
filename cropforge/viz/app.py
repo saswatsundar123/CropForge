@@ -1,15 +1,15 @@
-﻿"""
+"""
 cropforge/viz/app.py
 ====================
-Plotly Dash application â€” CropForge Phase 2+3+4 Dashboard Frontend.
+Plotly Dash application - CropForge Phase 2+3+4 Dashboard Frontend.
 
 PRD References:
-    Section 7.1 â€” Served by FastAPI on port 7860
-    Section 7.2 â€” Four-panel layout
-    Section 7.3 â€” Panel 1: Three.js iframe at /viewport/;
-                  raycasting postMessage PLANT_CLICKED â†’ Panel 4
-    Section 7.2 â€” Panel 4: Farm Inspector sidebar (collapsed by default)
-    Section 16  â€” Parquet schema driving the data layer
+    Section 7.1 - Served by FastAPI on port 7860
+    Section 7.2 - Four-panel layout
+    Section 7.3 - Panel 1: Three.js iframe at /viewport/;
+                  raycasting postMessage PLANT_CLICKED -> Panel 4
+    Section 7.2 - Panel 4: Farm Inspector sidebar (collapsed by default)
+    Section 16  - Parquet schema driving the data layer
 
 Layout (PRD Section 7.2):
     +----------------------------------+--------------------+
@@ -51,7 +51,7 @@ _DATA: Dict[str, Optional[pd.DataFrame]] = {
     "soil":     None,
     "env":      None,
     "log_path": None,
-    "terrain":  None,   # v0.6.0 â€” {field_name: {rows, cols, resolution_m, elevation_flat}}
+    "terrain":  None,   # v0.6.0 - {field_name: {rows, cols, resolution_m, elevation_flat}}
 }
 
 
@@ -76,7 +76,7 @@ def _load_parquet(log_path: str) -> None:
     We use pyarrow's HivePartitioning to decode the path segments back
     into DataFrame columns.
 
-    v0.4.0 â€” Season column:
+    v0.4.0 - Season column:
         The environment table now carries a ``season`` (int32) column.
         Legacy single-season logs do not have this column; we default it
         to 1 so all downstream code can assume it always exists.
@@ -131,7 +131,7 @@ def _load_parquet(log_path: str) -> None:
         else:
             logger.warning("Parquet subdirectory not found: %s", subdir)
 
-    # v0.6.0 â€” Load terrain grids written by runtime.py at simulation end.
+    # v0.6.0 - Load terrain grids written by runtime.py at simulation end.
     import json as _json
     _terrain_file = p / "terrain.json"
     if _terrain_file.exists():
@@ -141,7 +141,7 @@ def _load_parquet(log_path: str) -> None:
         except Exception:
             logger.exception("Failed to load terrain.json from %s", _terrain_file)
     else:
-        logger.info("No terrain.json found at %s â€” flat terrain assumed.", p)
+        logger.info("No terrain.json found at %s - flat terrain assumed.", p)
 
 
 
@@ -228,9 +228,9 @@ def build_csv_export(
     Parameters
     ----------
     daily_metrics:
-        Aggregated plant metrics (day Ã— field_name).
+        Aggregated plant metrics (day x field_name).
     daily_soil:
-        Aggregated topsoil metrics (day Ã— field_name), or empty DataFrame.
+        Aggregated topsoil metrics (day x field_name), or empty DataFrame.
     env_df:
         Full environment Parquet table (for 'season' column), or None.
     session_name:
@@ -369,7 +369,7 @@ def create_dash_app(log_path: str):
     import dash
     from dash import Input, Output, State, dcc, html
 
-    # Load data once (idempotent â€” skip if already cached by boot())
+    # Load data once (idempotent - skip if already cached by boot())
     if _DATA["plants"] is None:
         _load_parquet(log_path)
 
@@ -407,7 +407,7 @@ def create_dash_app(log_path: str):
         {"label": "Stress Index",         "value": "stress_index"},
     ]
 
-    # v0.6.0 â€” Terrain surface overlay: soil/env variables draped over elevation
+    # v0.6.0 - Terrain surface overlay: soil/env variables draped over elevation
     terrain_overlay_options = [
         {"label": "Elevation only",              "value": "__elevation__"},
         {"label": "Soil Moisture (%)",           "value": "moisture_pct"},
@@ -466,8 +466,8 @@ def create_dash_app(log_path: str):
         external_stylesheets=[],
     )
 
-    # ---- Brand palette (v0.5.0 â€” MINIMALIST THEME) -------------------------
-    # PRD Â§4.4: Minimalist UI, strict utilitarian document-style aesthetic.
+    # ---- Brand palette (v0.5.0 - MINIMALIST THEME) -------------------------
+    # PRD Section4.4: Minimalist UI, strict utilitarian document-style aesthetic.
     ACCENT   = "#111111"   # solid black (buttons, primary states)
     ACCENT_D = "#333333"   # hover states
     ACCENT_L = "#EAEAEA"   # light borders
@@ -485,14 +485,14 @@ def create_dash_app(log_path: str):
     SHADOW_MD= "0 2px 8px rgba(0,0,0,0.04)"
     SHADOW   = "none"
 
-    TEXT_PRI = "#111111"   # off-black â€” primary text
-    TEXT_SEC = "#787774"   # muted grey â€” secondary / labels
-    TEXT_DIM = "#9CA3AF"   # light grey â€” placeholders
+    TEXT_PRI = "#111111"   # off-black - primary text
+    TEXT_SEC = "#787774"   # muted grey - secondary / labels
+    TEXT_DIM = "#9CA3AF"   # light grey - placeholders
     TEXT_ACC = "#111111"
 
     _ROOT_CSS = f"""
         /* ================================================================
-           CropForge v0.5.0 â€” Premium Utilitarian Minimalism
+           CropForge v0.5.0 - Premium Utilitarian Minimalism
         ================================================================ */
         *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
@@ -570,18 +570,25 @@ def create_dash_app(log_path: str):
             from {{ opacity: 0; transform: translateY(-8px); }}
             to   {{ opacity: 1; transform: translateY(0); }}
         }}
-        .cf-wordmark {{
-            font-size: 15px; font-weight: 800; letter-spacing: -0.01em;
-            color: {ACCENT};
+        .cf-topbar-brand {{
             display: flex; align-items: center; gap: 10px;
+            min-width: 0;
         }}
-        .cf-wordmark-logo {{
-            width: 26px; height: 26px; object-fit: contain;
-            border-radius: 7px; background: #FFFFFF;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+        .cf-topbar-logo-mark {{
+            width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+            object-fit: contain;
+            background: #FFFFFF;
+            padding: 3px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.10);
         }}
-        .cf-wordmark-divider {{
-            width: 1px; height: 14px; background: #D1D5DB;
+        .cf-topbar-logo-title {{
+            font-size: 15px; font-weight: 800; letter-spacing: -0.01em;
+            color: {TEXT_PRI}; line-height: 1.1;
+        }}
+        .cf-topbar-logo-version {{
+            font-size: 10px; font-weight: 500; color: {TEXT_DIM};
+            letter-spacing: 0.04em; line-height: 1.25; margin-top: 2px;
+            white-space: nowrap;
         }}
         .cf-wordmark-subtitle {{
             font-size: 12px; font-weight: 500; color: {TEXT_SEC};
@@ -635,39 +642,16 @@ def create_dash_app(log_path: str):
             padding: 24px 20px;
             overflow: hidden;     /* grid-stretch sets exact height; this clips overflow */
             display: flex; flex-direction: column; gap: 0;
-            /* ponytail: no height:100% â€” grid align-items:stretch already fills the row */
+            /* ponytail: no height:100% - grid align-items:stretch already fills the row */
             box-sizing: border-box;
         }}
-        /* Inner scroller â€” scrolls sidebar content without clipping dropdowns */
+        /* Inner scroller - scrolls sidebar content without clipping dropdowns */
         #cf-sidebar-inner {{
             overflow-y: auto;
             flex: 1;
             min-height: 0;
             padding-right: 2px;  /* prevent scrollbar from clipping content */
         }}
-        #cf-sidebar-logo {{
-            display: flex; align-items: center; gap: 10px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #E5E7EB;
-            margin-bottom: 16px;
-            flex-shrink: 0;  /* never let the logo compress; gives space to inner scroller */
-        }}
-        #cf-sidebar-logo-mark {{
-            width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-            object-fit: contain;
-            background: #FFFFFF;
-            padding: 3px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-        }}
-        #cf-sidebar-logo-text {{
-            font-size: 14px; font-weight: 700; color: {TEXT_PRI};
-            letter-spacing: -0.01em;
-        }}
-        #cf-sidebar-logo-version {{
-            font-size: 10px; font-weight: 500; color: {TEXT_DIM};
-            letter-spacing: 0.04em;
-        }}
-
         .cf-section {{
             margin-bottom: 18px;
             animation: cfFadeUp 0.4s cubic-bezier(0.32,0.72,0,1) both;
@@ -730,7 +714,7 @@ def create_dash_app(log_path: str):
             background: #FFFFFF !important;
             border-radius: 4px !important;
         }}
-        /* Control box â€” the visible input row */
+        /* Control box - the visible input row */
         .cf-select .dash-dropdown,
         .cf-select .Select-control,
         .cf-select div[class$="-container"],
@@ -800,7 +784,7 @@ def create_dash_app(log_path: str):
             background-color: #EAEAEA !important;
         }}
 
-        /* ---- Centre â€” 3D viewport ---------------------------------- */
+        /* ---- Centre - 3D viewport ---------------------------------- */
         #cf-viewport {{
             position: relative;
             background: {BG_DARK};
@@ -821,7 +805,7 @@ def create_dash_app(log_path: str):
             border: none;
             display: block;
         }}
-        /* dcc.Loading injects a div wrapper â€” must also be flex so iframe fills height */
+        /* dcc.Loading injects a div wrapper - must also be flex so iframe fills height */
         #cf-viewport > div,
         #viewport-loading,
         #viewport-loading > div {{
@@ -842,7 +826,7 @@ def create_dash_app(log_path: str):
             padding: 12px;
         }}
 
-        /* Panel card â€” minimalist bento card */
+        /* Panel card - minimalist bento card */
         .cf-card {{
             background: {BG_PANEL};
             border-radius: 8px;
@@ -995,10 +979,10 @@ def create_dash_app(log_path: str):
             dcc.Store(id="selected-field-store", storage_type="memory",
                       data=default_field),
             dcc.Store(id="terrain-modal-open",   storage_type="memory", data=False),
-            # Polling interval: fires every 250 ms to relay postMessage â†’ Dash store
+            # Polling interval: fires every 250 ms to relay postMessage -> Dash store
             dcc.Interval(id="inspector-poll", interval=250, n_intervals=0),
             html.Div(id="plant-msg-trigger", style={"display": "none"}),
-            # dcc.Download â€” file-delivery component
+            # dcc.Download - file-delivery component
             dcc.Download(id="download-csv"),
 
             # ================================================================
@@ -1020,12 +1004,24 @@ def create_dash_app(log_path: str):
             ),
 
             # ================================================================
-            # Top bar â€” wordmark, session badges, export button
+            # Top bar - wordmark, session badges, export button
             # ================================================================
             html.Div(id="cf-topbar", children=[
                 html.Div([
-                    html.Div([html.Img(src="/viewport/CropForge_Logo.png", className="cf-wordmark-logo", alt="CropForge logo"), html.Span("CropForge")], className="cf-wordmark"),
-                    html.Div(className="cf-wordmark-divider"),
+                    html.Div(className="cf-topbar-brand", children=[
+                        html.Img(
+                            src="/viewport/CropForge_Logo.png",
+                            className="cf-topbar-logo-mark",
+                            alt="CropForge logo",
+                        ),
+                        html.Div([
+                            html.Div("CropForge", className="cf-topbar-logo-title"),
+                            html.Div(
+                                "v1.0.0 - Research Dashboard",
+                                className="cf-topbar-logo-version",
+                            ),
+                        ]),
+                    ]),
                     html.Div(session_name, className="cf-wordmark-subtitle"),
                 ], style={"display": "flex", "alignItems": "center", "gap": "10px"}),
                 html.Div([
@@ -1035,19 +1031,19 @@ def create_dash_app(log_path: str):
                     html.Span(f"{n_fields} field{'s' if n_fields != 1 else ''}",
                               style=_STYLE_BADGE),
                     html.Button(
-                        "â¬‡ Export CSV",
+                        "Export CSV",
                         id="export-csv-btn",
                         n_clicks=0,
                         className="cf-btn",
                     ),
                     html.Button(
-                        "â—€ L",
+                        "L",
                         id="toggle-left-btn",
                         n_clicks=0,
                         className="cf-btn",
                     ),
                     html.Button(
-                        "R â–¶",
+                        "R",
                         id="toggle-right-btn",
                         n_clicks=0,
                         className="cf-btn",
@@ -1061,19 +1057,9 @@ def create_dash_app(log_path: str):
             html.Div(id="cf-shell", children=[
 
                 # ============================================================
-                # LEFT SIDEBAR â€” all controls (PRD Â§4.3: 18%)
+                # LEFT SIDEBAR - all controls (PRD Section4.3: 18%)
                 # ============================================================
                 html.Div(id="cf-sidebar", children=[
-
-                    # -- Sidebar logo/brand mark ---
-                    html.Div(id="cf-sidebar-logo", children=[
-                        html.Img(src="/viewport/CropForge_Logo.png", id="cf-sidebar-logo-mark", alt="CropForge logo"),
-                        html.Div([
-                            html.Div("CropForge", id="cf-sidebar-logo-text"),
-                            html.Div("v1.0.0 · Research Dashboard",
-                                     id="cf-sidebar-logo-version"),
-                        ]),
-                    ]),
 
                     # -- Field selector (multi-field only) ---
                     html.Div(id="cf-sidebar-inner", children=[
@@ -1096,7 +1082,7 @@ def create_dash_app(log_path: str):
                                 "display": "block" if len(field_names) <= 1 else "none",
                             },
                             children=html.Span(
-                                default_field or "â€”",
+                                default_field or "-",
                                 style={**_STYLE_BADGE,
                                        "fontSize": "12px", "marginLeft": "0"},
                             ),
@@ -1129,7 +1115,7 @@ def create_dash_app(log_path: str):
                             id="heatmap-variable-dropdown",
                             options=[
                                 {"label": "Biomass (g/plant)",   "value": "biomass_g"},
-                                {"label": "LAI (mÂ²/mÂ²)", "value": "lai"},
+                                {"label": "LAI (m2/m2)", "value": "lai"},
                                 {"label": "Weed LAI",             "value": "weed_lai"},
                                 {"label": "Height (cm)",          "value": "height_cm"},
                                 {"label": "Stress Index",         "value": "stress_index"},
@@ -1165,7 +1151,7 @@ def create_dash_app(log_path: str):
                             id="ts-variable-dropdown",
                             options=[
                                 {"label": "Mean Biomass (g/plant)", "value": "mean_biomass_g"},
-                                {"label": "Mean LAI (mÂ²/mÂ²)", "value": "mean_lai"},
+                                {"label": "Mean LAI (m2/m2)", "value": "mean_lai"},
                                 {"label": "Mean Height (cm)",        "value": "mean_height_cm"},
                                 {"label": "Mean Root Depth (cm)",    "value": "mean_root_depth_cm"},
                                 {"label": "Mean Stress Index",       "value": "mean_stress_index"},
@@ -1215,14 +1201,14 @@ def create_dash_app(log_path: str):
                 ]),  # end sidebar
 
                 # ============================================================
-                # TERRAIN MODAL OVERLAY (Task 3 â€” v0.6.0)
+                # TERRAIN MODAL OVERLAY (Task 3 - v0.6.0)
                 # Pure CSS modal; opened/closed via clientside callback.
                 # ============================================================
                 html.Div(id="terrain-modal-overlay", children=[
                     html.Div(id="terrain-modal-box", children=[
                         html.Div(id="terrain-modal-header", children=[
                             html.Div([
-                                html.Span("â›°ï¸ ", style={"marginRight": "6px"}),
+                                html.Span("", style={"marginRight": "6px"}),
                                 html.Span("3D Terrain Map", style={
                                     "fontSize": "13px", "fontWeight": "700",
                                     "color": TEXT_PRI,
@@ -1241,7 +1227,7 @@ def create_dash_app(log_path: str):
                                     placeholder="Surface Variable",
                                 ),
                                 html.Button(
-                                    "âœ• Close",
+                                    "Close",
                                     id="close-terrain-modal-btn",
                                     n_clicks=0,
                                     className="cf-btn",
@@ -1267,7 +1253,7 @@ def create_dash_app(log_path: str):
                 ]),
 
                 # ============================================================
-                # CENTRE â€” 3D Field View (PRD Â§4.3: 52%)
+                # CENTRE - 3D Field View (PRD Section4.3: 52%)
                 # ============================================================
                 html.Div(id="cf-viewport", children=[
                     dcc.Loading(
@@ -1290,7 +1276,7 @@ def create_dash_app(log_path: str):
                 ]),
 
                 # ============================================================
-                # RIGHT COLUMN â€” Metrics + Inspector (PRD Â§4.3: 30%)
+                # RIGHT COLUMN - Metrics + Inspector (PRD Section4.3: 30%)
                 # ============================================================
                 html.Div(id="cf-right", children=[
 
@@ -1335,9 +1321,9 @@ def create_dash_app(log_path: str):
                                 style={"height": "220px", "width": "100%"},
                             ),
 
-                            # v0.6.0 â€” Expand to full 3D Terrain modal
+                            # v0.6.0 - Expand to full 3D Terrain modal
                             html.Button(
-                                "â›°ï¸ Open 3D Terrain Map",
+                                "Open 3D Terrain Map",
                                 id="open-terrain-modal-btn",
                                 n_clicks=0,
                                 style={
@@ -1403,7 +1389,7 @@ def create_dash_app(log_path: str):
                                 html.Div("Plant Inspector", className="cf-panel-title",
                                          style={"paddingBottom": "0", "borderBottom": "none"}),
                                 html.Button(
-                                    "âœ•",
+                                    "Close",
                                     id="inspector-close-btn",
                                     n_clicks=0,
                                     style={
@@ -1427,7 +1413,7 @@ def create_dash_app(log_path: str):
                                     "fontVariantNumeric": "tabular-nums",
                                 }),
 
-                                # Placeholder â€” shown when no plant is selected
+                                # Placeholder - shown when no plant is selected
                                 html.Div(
                                     id="inspector-content",
                                     children=html.Div(
@@ -1480,7 +1466,7 @@ def create_dash_app(log_path: str):
             return window.dash_clientside.no_update;
         }
         """,
-        Output("cf-loading-overlay", "id"),  # dummy â€” id never changes
+        Output("cf-loading-overlay", "id"),  # dummy - id never changes
         Input("viewport-iframe", "id"),
         prevent_initial_call=False,
     )
@@ -1520,7 +1506,7 @@ def create_dash_app(log_path: str):
         fields = sorted(plot_df["field_name"].unique())
         fig = go.Figure()
 
-        # Brand palette per PRD Â§4.4: primary green, secondary greens, red scale for stress
+        # Brand palette per PRD Section4.4: primary green, secondary greens, red scale for stress
         colors = ["#4CAF7D", "#81C784", "#A5D6A7", "#E57373", "#EF9A9A"]
         for i, field in enumerate(fields):
             field_data = plot_df[plot_df["field_name"] == field].sort_values("day")
@@ -1533,7 +1519,7 @@ def create_dash_app(log_path: str):
                 marker={"size": 4},
             ))
 
-        # v0.4.0 â€” Season boundary vertical lines (PRD Â§7.5)
+        # v0.4.0 - Season boundary vertical lines (PRD Section7.5)
         # Computed from the env table so the boundary is the actual
         # first Parquet day tagged season > 1, not a synthetic estimate.
         season_boundaries = _get_season_boundaries(env_df)
@@ -1567,8 +1553,8 @@ def create_dash_app(log_path: str):
         return fig
 
     # ------------------------------------------------------------------
-    # v0.6.0 â€” Terrain modal: toggle open/close via dcc.Store
-    # Two callbacks: (1) button clicks â†’ store, (2) store â†’ overlay style.
+    # v0.6.0 - Terrain modal: toggle open/close via dcc.Store
+    # Two callbacks: (1) button clicks -> store, (2) store -> overlay style.
     # ------------------------------------------------------------------
     @app.callback(
         Output("terrain-modal-open", "data"),
@@ -1600,9 +1586,9 @@ def create_dash_app(log_path: str):
         return {"display": "none"}
 
     def _build_terrain_surface(overlay_var: str, day: int, selected_field: str):
-        """v0.6.0 â€” Helper to render go.Surface for the Terrain Map.
+        """v0.6.0 - Helper to render go.Surface for the Terrain Map.
         z = elevation_grid (physical metres), surfacecolor = overlay variable.
-        Upsampled 4Ã— with scipy.ndimage.zoom for high-res visual quality (PRD v0.9.0 Â§5).
+        Upsampled 4x with scipy.ndimage.zoom for high-res visual quality (PRD v0.9.0 Section5).
         """
         import numpy as np
         from scipy.ndimage import zoom as _zoom
@@ -1694,7 +1680,7 @@ def create_dash_app(log_path: str):
                 except Exception:
                     pass  # keep elevation fallback
 
-        # Upsample both grids 4Ã— â€” z (bicubic) and surfacecolor (linear) must match shape.
+        # Upsample both grids 4x - z (bicubic) and surfacecolor (linear) must match shape.
         # ponytail: zoom both here, once, so every caller gets the same treatment.
         ZOOM = 4.0
         elev_up   = _zoom(elev_grid,    ZOOM, order=3)
@@ -1944,11 +1930,11 @@ def create_dash_app(log_path: str):
         prevent_initial_call=False,
     )
     def update_terrain_modal(n_clicks, overlay_var: str, day: int, selected_field: str):
-        """v0.6.0 â€” Render go.Surface for the Terrain Map modal."""
+        """v0.6.0 - Render go.Surface for the Terrain Map modal."""
         return _build_terrain_surface(overlay_var, day, selected_field)
 
     # ------------------------------------------------------------------
-    # Clientside callback 1: Dash slider â†’ Three.js iframe (PRD Â§7.3)
+    # Clientside callback 1: Dash slider -> Three.js iframe (PRD Section7.3)
     # ------------------------------------------------------------------
     app.clientside_callback(
         """
@@ -1993,8 +1979,8 @@ def create_dash_app(log_path: str):
     )
 
     # ------------------------------------------------------------------
-    # Clientside callback 1b: Field Selector â†’ Three.js iframe re-bootstrap
-    # PRD v0.2.0 Â§8 (Multi-Field Frontend)
+    # Clientside callback 1b: Field Selector -> Three.js iframe re-bootstrap
+    # PRD v0.2.0 Section8 (Multi-Field Frontend)
     # When the user picks a different field, post cf_set_field to the
     # iframe so it re-fetches /api/buffer/meta?field=<name> and reloads.
     # ------------------------------------------------------------------
@@ -2062,13 +2048,13 @@ def create_dash_app(log_path: str):
             return window.dash_clientside.no_update;
         }
         """,
-        Output("selected-plant-store", "id"),  # dummy â€” id never changes
+        Output("selected-plant-store", "id"),  # dummy - id never changes
         Input("viewport-iframe",       "id"),
         prevent_initial_call=False,
     )
 
     # ------------------------------------------------------------------
-    # Clientside callback 3: Polling interval â†’ selected-plant-store
+    # Clientside callback 3: Polling interval -> selected-plant-store
     # Reads window._cf_pending_plant (set by the message listener above)
     # and writes it into the Dash store so Python callbacks can fire.
     # ------------------------------------------------------------------
@@ -2088,7 +2074,7 @@ def create_dash_app(log_path: str):
     )
 
     # ------------------------------------------------------------------
-    # Python callback: selected-plant-store â†’ Panel 4 inspector UI
+    # Python callback: selected-plant-store -> Panel 4 inspector UI
     # ------------------------------------------------------------------
     @app.callback(
         Output("inspector-panel",    "style"),
@@ -2109,7 +2095,7 @@ def create_dash_app(log_path: str):
         # Determine which input fired
         trigger_id = ctx.triggered_id if ctx.triggered_id else ""
 
-        # Close button or deselect â†’ show placeholder
+        # Close button or deselect -> show placeholder
         if trigger_id == "inspector-close-btn" or plant_data is None:
             return {}, "", html.Div(
                 "Click any plant in the Field View to inspect it.",
@@ -2154,16 +2140,16 @@ def create_dash_app(log_path: str):
                 return str(v)
 
         stat_pairs = [
-            ("Field",        selected_field or day_slice.get("field_name", "â€”")),
+            ("Field",        selected_field or day_slice.get("field_name", "-")),
             ("Row",          p_row),
             ("Col",          p_col),
-            ("Alive",        bool(day_slice.get("alive", True)) if len(day_slice) else "â€”"),
+            ("Alive",        bool(day_slice.get("alive", True)) if len(day_slice) else "-"),
             ("Biomass (g)",  _fmt(day_slice.get("biomass_g",  0))),
-            ("LAI (mÂ²/mÂ²)", _fmt(day_slice.get("lai",         0))),
+            ("LAI (m2/m2)", _fmt(day_slice.get("lai",         0))),
             ("Height (cm)",  _fmt(day_slice.get("height_cm",  0), 1)),
             ("Root depth (cm)", _fmt(day_slice.get("root_depth_cm", 0), 1)),
             ("Stress index", _fmt(day_slice.get("stress_index", 0))),
-            ("Stage",        day_slice.get("phenological_stage", "â€”")),
+            ("Stage",        day_slice.get("phenological_stage", "-")),
         ]
 
         stat_rows = []
@@ -2221,7 +2207,7 @@ def create_dash_app(log_path: str):
             ts_chart,
         ])
 
-        # ---- Soil vertical cross-section chart (PRD Â§7.2) -------------
+        # ---- Soil vertical cross-section chart (PRD Section7.2) -------------
         soil_chart = html.Div()
         if soil_df is not None and not soil_df.empty:
             src_soil = soil_df
@@ -2283,7 +2269,7 @@ def create_dash_app(log_path: str):
         return {}, plant_id, inspector_children, soil_chart
 
     # ------------------------------------------------------------------
-    # CSV Download callback (PRD v0.4.0 Â§8.2)
+    # CSV Download callback (PRD v0.4.0 Section8.2)
     # Exports the aggregated daily_metrics DataFrame (all fields, all days)
     # to a browser-downloadable CSV.  Named following the PRD convention:
     #   cropforge_timeseries_{session}_{YYYYMMDD}.csv
@@ -2312,7 +2298,7 @@ def create_dash_app(log_path: str):
 def _chart_layout() -> dict:
     """Common layout properties for all Plotly figures (v0.5.0 Minimalist Theme).
 
-    v0.5.0: Updated to premium utilitarian palette (PRD Â§4.4).
+    v0.5.0: Updated to premium utilitarian palette (PRD Section4.4).
     """
     return {
         "paper_bgcolor": "#FFFFFF",

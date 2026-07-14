@@ -197,6 +197,8 @@ def run_irrigation_trial() -> None:
     stress_b: dict = {}
     moisture_a: dict = {}
     moisture_b: dict = {}
+    # track call count per day to distinguish field A vs B (farm dispatches all fields per day)
+    _call_n: dict = {}
 
     @farm.step(phase=0)
     def accumulate_biomass(state, env):
@@ -212,17 +214,22 @@ def run_irrigation_trial() -> None:
         return state
 
     @farm.step(phase=1)
-    def record_a(state, env):
-        if state.plants and state.plants[0].plant_id.startswith("Plot_A"):
-            stress_a[state.day] = state.plants[0].stress_index
-            moisture_a[state.day] = state.soil[0][0][0].moisture_pct
-        return state
-
-    @farm.step(phase=1)
-    def record_b(state, env):
-        if state.plants and state.plants[0].plant_id.startswith("Plot_B"):
-            stress_b[state.day] = state.plants[0].stress_index
-            moisture_b[state.day] = state.soil[0][0][0].moisture_pct
+    def record_fields(state, env):
+        """Record stress and moisture for both fields.
+        Farm calls this step once per field per day; first call = Plot_A, second = Plot_B.
+        """
+        if not state.plants:
+            return state
+        call_idx = _call_n.get(state.day, 0)
+        _call_n[state.day] = call_idx + 1
+        si = state.plants[0].stress_index
+        mc = state.soil[0][0][0].moisture_pct
+        if call_idx == 0:  # first field = Plot_A_Rainfed
+            stress_a[state.day] = si
+            moisture_a[state.day] = mc
+        else:              # second field = Plot_B_Irrigated
+            stress_b[state.day] = si
+            moisture_b[state.day] = mc
         return state
 
     farm.run(days=90)

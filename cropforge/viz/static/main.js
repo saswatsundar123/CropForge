@@ -36,6 +36,9 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { GammaCorrectionShader } from 'three/addons/shaders/GammaCorrectionShader.js';
 
 window.__cfThreeViewportStarted = true;
 
@@ -44,9 +47,8 @@ window.__cfThreeViewportStarted = true;
 // ---------------------------------------------------------------------------
 
 const API = window.location.origin;           // same origin as iframe parent
-const FLOATS = 14;                                // float32 values per plant (v0.9.5 Phase 3)
-const BYTES = FLOATS * 4;                        // bytes per plant
-
+const FLOATS = 14;                            // float32 values per plant (v0.9.5 Phase 3)
+const BYTES = FLOATS * 4;                     // bytes per plant
 let meta = null;   // buffer metadata from /api/buffer/meta
 let qualityEnhanced = false;  // true when quality="enhanced" (PBR shadows + HDR)
 let terrainGrid = null;   // Float32Array [rows*cols] row-major elevation values (v0.6.0)
@@ -89,7 +91,7 @@ const _mat = new THREE.Matrix4();
 // Ceiling: >256 chunks with animated terrain would need GPU-side LOD; add when needed.
 let _terrainChunks = [];   // [{mesh, cx, cz, geoHi, geoLo, isLo}]
 const _CHUNK_CELLS = 64;   // cells per chunk edge
-const _LOD_LO_SQ  = 80 * 80;  // world-unit² distance to switch to lo-res
+const _LOD_LO_SQ  = 80 * 80;  // world-unit^2 distance to switch to lo-res
 const _LOD_HI_SQ  = 55 * 55;  // hysteresis - switch back to hi when closer than this
 
 // Raycasting
@@ -288,7 +290,9 @@ function initScene() {
   const ambient = new THREE.AmbientLight(0xffffff, 0.45);
   scene.add(ambient);
 
-  const sun = new THREE.DirectionalLight(0xfff0d0, 1.4);
+  // Lighting: sun at 0.8 keeps cream soil (luminance ~0.67) below bloom threshold 0.85.
+  // Old value 1.4 caused terrain glow.
+  const sun = new THREE.DirectionalLight(0xfff0d0, 0.8);
   sun.position.set(fieldW * 0.6, 20, fieldD * 0.3);
   // ponytail: shadows are expensive - only enable in enhanced quality mode
   sun.castShadow = qualityEnhanced;
@@ -414,9 +418,12 @@ function buildTerrainChunks(fieldW, fieldD) {
 
       const chunkMesh = new THREE.Mesh(geoHi, mat);
 
-      // Position: chunk centre in world space
-      const worldX = (c0 + (cN - c0) / 2) * spacing;
-      const worldZ = (r0 + (rN - r0) / 2) * spacing;
+      // Position: chunk centre in world space.
+      // PlaneGeometry width = (sampC-1)*spacing, spanning [c0*s, (cN-1)*s].
+      // Centre must be at the midpoint of that range, not (c0+cN)/2.
+      // Old formula gave a 0.5-unit offset that put edge plants outside terrain.
+      const worldX = (c0 + (cN - 1 - c0) / 2) * spacing;
+      const worldZ = (r0 + (rN - 1 - r0) / 2) * spacing;
       chunkMesh.position.set(worldX, 0.0, worldZ);
       chunkMesh.receiveShadow = qualityEnhanced;
       chunkMesh.frustumCulled = true;
@@ -453,9 +460,9 @@ function _cylinderGeo() {
 }
 
 function _makePlantMat() {
-  // PBR plant material - instanced colour via instanceColor
-  // ponytail: transmission removed - semi-transparency on instanced meshes
-  // causes ghost/arrow artifacts; standard roughness is sufficient for crops.
+  // MeshPhysicalMaterial + InstancedMesh in r152 has massive normal/tangent matrix bugs
+  // which causes lighting to render as if the mesh is rotated sideways horizontally!
+  // We MUST use MeshStandardMaterial for InstancedMesh in this version.
   return new THREE.MeshStandardMaterial({
     roughness: qualityEnhanced ? 0.6 : 0.7,
     metalness: 0.0,
@@ -466,15 +473,25 @@ function initEnhancedRendering(width, height) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  // SSAO gives soft ambient occlusion depth cues without the
-  // bloom halo that caused terrain glow on bright diffuse surfaces.
-  // ponytail: bloom removed - threshold 0.85 fired on sunlit cream soil;
-  // bloom is correct only for emissive objects (LEDs, headlights, etc.)
+  // SSAO: soft ambient occlusion depth cues
   const ssaoPass = new SSAOPass(scene, camera, width, height);
   ssaoPass.kernelRadius = 8;
   ssaoPass.minDistance = 0.001;
   ssaoPass.maxDistance = 0.3;
   composer.addPass(ssaoPass);
+
+  // Bloom: PRD v0.9.5 Section 2.5; threshold=0.85 fires on brightest canopy greens.
+  // Terrain stays below threshold because sun intensity is 0.8 (not the old 1.4).
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(width, height),
+    0.25,   // strength
+    0.4,    // radius
+    0.85,   // threshold: fires only on luminance > 0.85 (canopy tops, not soil)
+  );
+  composer.addPass(bloomPass);
+
+  // ShaderPass(GammaCorrectionShader) = r152-compatible equivalent of OutputPass
+  composer.addPass(new ShaderPass(GammaCorrectionShader));
 }
 
 function _installPlantMorphShader(material, geometry) {
@@ -882,8 +899,12 @@ async function loadGltfMeshes() {
       const gltf = await new Promise((res, rej) => _gltfLoader.load(uri, res, undefined, rej));
       // Extract first BufferGeometry from the loaded scene
       let geo = null;
+      gltf.scene.updateMatrixWorld(true);
       gltf.scene.traverse(child => {
-        if (!geo && child.isMesh) geo = child.geometry.clone();
+        if (!geo && child.isMesh) {
+          geo = child.geometry.clone();
+          geo.applyMatrix4(child.matrixWorld);
+        }
       });
       if (!geo) { console.warn(`GLTF ${uri}: no mesh found, using cylinder`); continue; }
 
@@ -921,8 +942,8 @@ function showDay(day) {
   const n = meta.n_plants;
   const cols = meta.cols;
   // ponytail: raised floors - at 0.05/0.08 early seedlings were sub-pixel specks
-  const minScale = 0.20;
-  const minRadius = 0.14;
+  const minScale = 0.25;
+  const minRadius = 0.04;
   const camX = camera.position.x;
   const camZ = camera.position.z;
 
@@ -973,14 +994,10 @@ function showDay(day) {
       }
     }
 
-    let elevY = 0.0;
-    if (terrainGrid) {
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-      elevY = (_terrainElevScale > 0)
-        ? (terrainGrid[row * terrainCols + col] - _terrainEMin) * _terrainElevScale
-        : 0.0;
-    }
+    // Use _terrainYAt for safe clamped lookup (handles terrainCols != meta.cols edge case)
+    const _row = Math.floor(i / cols);
+    const _col = i % cols;
+    const elevY = _terrainYAt(_row, _col);
 
     if (i === selectedInstance) { r = 1.0; g = 1.0; b = 0.0; }
 
@@ -1247,8 +1264,10 @@ function startPlayback() {
   playTimer = setInterval(() => {
     const days = meta.days;
     const idx = days.indexOf(currentDay);
-    const next = days[(idx + 1) % days.length];
-    showDay(next);
+    const nextIdx = idx + 1;
+    // Stop at last day instead of looping; re-click Play to restart
+    if (nextIdx >= days.length) { stopPlayback(); return; }
+    showDay(days[nextIdx]);
   }, intervalMs);
   playing = true;
   btnPlay.textContent = 'Pause';
@@ -1415,3 +1434,6 @@ function onResize() {
 if (!window.__cfFallbackViewportStarted) {
   bootstrap(null).catch(failToFallback);
 }
+
+
+

@@ -242,3 +242,5 @@ print(f"    E/W ratio:              {ratio:.2f}x  {dominance}")
 print(f"")
 print(f"  Parquet log:  {farm._last_log_path or 'logging disabled'}")
 print(f"{'=' * 60}\n")
+
+farm.visualize(quality="enhanced")
