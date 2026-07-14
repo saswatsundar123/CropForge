@@ -90,7 +90,7 @@ _GRID_SPACING = 1.0
 
 # Maximum radius (LAI proxy) in world units
 _MAX_RADIUS = 0.4
-_MIN_RADIUS = 0.05
+_MIN_RADIUS = 0.10   # ponytail: raised from 0.05 - seedlings at 0.05 were sub-pixel hairlines
 
 
 # ---------------------------------------------------------------------------

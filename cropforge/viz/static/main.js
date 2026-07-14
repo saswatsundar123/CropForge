@@ -1,5 +1,5 @@
 /**
- * main.js — CropForge 3D Viewport
+ * main.js - CropForge 3D Viewport
  *
  * PRD Section 7.3:
  *   - Three.js r152 instanced cylinder meshes
@@ -10,7 +10,7 @@
  *   - Binary Float32Array from /api/buffer?day=N (no JSON)
  *   - All days preloaded into browser memory on page load
  *   - Timeline scrubber driven by postMessage from Dash parent
- *   - Raycasting: click a plant → highlight + postMessage PLANT_CLICKED
+ *   - Raycasting: click a plant -> highlight + postMessage PLANT_CLICKED
  *
  * Binary frame layout (14 float32 per plant, 56 bytes):
  *   [0]  x              grid col position (world units)
@@ -36,8 +36,8 @@ import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+window.__cfThreeViewportStarted = true;
 
 // ---------------------------------------------------------------------------
 // Globals
@@ -52,7 +52,7 @@ let qualityEnhanced = false;  // true when quality="enhanced" (PBR shadows + HDR
 let terrainGrid = null;   // Float32Array [rows*cols] row-major elevation values (v0.6.0)
 let terrainRows = 0;
 let terrainCols = 0;
-let frames = {};     // {day: Float32Array}  — all preloaded frames
+let frames = {};     // {day: Float32Array}  - all preloaded frames
 let dayMeta = {};    // {day: {machinery: [...]}} lightweight JSON metadata
 let currentDay = 1;
 let currentField = null;   // active field name (null = server default)
@@ -60,9 +60,9 @@ let playing = false;
 let speedMult = 1;
 let playTimer = null;
 // v0.9.0 Phase 3: meshes map, keyed by model_index (0 = cylinder fallback).
-// ponytail: keep `mesh` as alias to meshes[0] — all selection/colour code unchanged.
+// ponytail: keep `mesh` as alias to meshes[0] - all selection/colour code unchanged.
 let meshes = {};   // {model_index: THREE.InstancedMesh}
-let mesh = null;   // alias → meshes[0], cylinder fallback
+let mesh = null;   // alias -> meshes[0], cylinder fallback
 let soilMesh = null;
 let machineryMesh = null;
 let machineryAnim = null;
@@ -75,10 +75,10 @@ let weedTintMesh = null;
 let weedMesh = null;
 let renderer, scene, camera, controls, composer;
 
-// ponytail: cache terrain elev constants once at init — not per frame, not per plant
+// ponytail: cache terrain elev constants once at init - not per frame, not per plant
 let _terrainEMin = 0.0;
 let _terrainElevScale = 0.0;
-// ponytail: pre-allocated objects reused every frame — avoid GC churn in hot loop
+// ponytail: pre-allocated objects reused every frame - avoid GC churn in hot loop
 const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();  // identity, never rotated
 const _scl = new THREE.Vector3();
@@ -90,7 +90,7 @@ const _mat = new THREE.Matrix4();
 let _terrainChunks = [];   // [{mesh, cx, cz, geoHi, geoLo, isLo}]
 const _CHUNK_CELLS = 64;   // cells per chunk edge
 const _LOD_LO_SQ  = 80 * 80;  // world-unit² distance to switch to lo-res
-const _LOD_HI_SQ  = 55 * 55;  // hysteresis — switch back to hi when closer than this
+const _LOD_HI_SQ  = 55 * 55;  // hysteresis - switch back to hi when closer than this
 
 // Raycasting
 const raycaster = new THREE.Raycaster();
@@ -125,14 +125,14 @@ const btnExportGlb = document.getElementById('btn-export-glb');
 // ---------------------------------------------------------------------------
 
 async function bootstrap(fieldName) {
-  /* fieldName: string | null — pass null to load the server-default field */
+  /* fieldName: string | null - pass null to load the server-default field */
   if (fieldName !== undefined && fieldName !== null) {
     currentField = fieldName;
   }
 
   const fieldParam = currentField ? `?field=${encodeURIComponent(currentField)}` : '';
 
-  setStatus('Fetching session metadata…', 2);
+  setStatus('Fetching session metadata...', 2);
 
   try {
     const r = await fetch(`${API}/api/buffer/meta${fieldParam}`);
@@ -150,7 +150,7 @@ async function bootstrap(fieldName) {
     if (hudField) hudField.textContent = meta.field_name;
   }
 
-  setStatus(`Preloading ${meta.n_days} days × ${meta.n_plants} plants…`, 5);
+  setStatus(`Preloading ${meta.n_days} days x ${meta.n_plants} plants...`, 5);
 
   frames = {};   // clear old frames
   dayMeta = {};
@@ -177,10 +177,10 @@ async function bootstrap(fieldName) {
     setStatus(`Preloading day ${day} / ${days[days.length - 1]}  (${pct}%)`, pct);
   }
 
-  setStatus('Building 3D scene…', 98);
+  setStatus('Building 3D scene...', 98);
   await new Promise(r => setTimeout(r, 50));  // yield to let browser paint
 
-  // v0.6.0 — Fetch terrain elevation grid (modified by LandPrep if any)
+  // v0.6.0 - Fetch terrain elevation grid (modified by LandPrep if any)
   try {
     const tr = await fetch(`${API}/api/buffer/terrain${fieldParam}`);
     if (tr.ok) {
@@ -204,10 +204,11 @@ async function bootstrap(fieldName) {
   showDay(days[0]);
 
   // Hide iframe loader
+  window.__cfThreeViewportReady = true;
   loader.classList.add('hidden');
   setTimeout(() => { loader.style.display = 'none'; }, 650);
 
-  // Notify Dash parent that viewport is fully loaded (PRD v0.5.0 §4.5)
+  // Notify Dash parent that viewport is fully loaded (PRD v0.5.0 Section4.5)
   // The Dash layout listens for this and hides the Dash-level loading overlay.
   try {
     window.parent.postMessage(
@@ -215,19 +216,28 @@ async function bootstrap(fieldName) {
       window.location.origin
     );
   } catch (e) {
-    // cross-origin or no parent — safe to ignore
+    // cross-origin or no parent - safe to ignore
   }
 
   // Update legend
   updateLegendMeta();
 
-  // Start animation loop (idempotent — animate() guards with RAF)
+  // Start animation loop (idempotent - animate() guards with RAF)
   animate();
 }
 
 function setStatus(msg, pct) {
   loaderStatus.textContent = msg;
   if (pct !== undefined) loaderFill.style.width = pct + '%';
+}
+
+function failToFallback(err) {
+  console.error('CropForge Three.js viewport failed:', err);
+  const message = err && err.message ? err.message : String(err || 'unknown error');
+  setStatus(`Viewport fallback: ${message}`, 0);
+  if (window.CropForgeFallback && !window.__cfFallbackViewportStarted) {
+    window.CropForgeFallback.start('Three.js bootstrap error');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -252,12 +262,12 @@ function initScene() {
   }
   wrapper.appendChild(renderer.domElement);
 
-  // Scene — bright light background
+  // Scene - bright light background
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x9c9c9c);
   scene.fog = new THREE.FogExp2(0x9c9c9c, 0.016);
 
-  // Camera — isometric-ish perspective above the field
+  // Camera - isometric-ish perspective above the field
   camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 500);
   const fieldW = meta.cols * meta.grid_spacing;
   const fieldD = meta.rows * meta.grid_spacing;
@@ -280,7 +290,7 @@ function initScene() {
 
   const sun = new THREE.DirectionalLight(0xfff0d0, 1.4);
   sun.position.set(fieldW * 0.6, 20, fieldD * 0.3);
-  // ponytail: shadows are expensive — only enable in enhanced quality mode
+  // ponytail: shadows are expensive - only enable in enhanced quality mode
   sun.castShadow = qualityEnhanced;
   if (qualityEnhanced) {
     sun.shadow.mapSize.set(2048, 2048);
@@ -296,10 +306,10 @@ function initScene() {
   const fill = new THREE.HemisphereLight(0x4060a0, 0x2c4a2c, 0.35);
   scene.add(fill);
 
-  // Ground plane (soil surface) — chunked LOD terrain (v0.8.0 Phase 5)
+  // Ground plane (soil surface) - chunked LOD terrain (v0.8.0 Phase 5)
   buildTerrainChunks(fieldW, fieldD);
 
-  // Grid helper (subtle) — skip for huge grids to avoid overdraw
+  // Grid helper (subtle) - skip for huge grids to avoid overdraw
   if (meta.cols <= 200 && meta.rows <= 200) {
     const grid = new THREE.GridHelper(
       Math.max(fieldW, fieldD) + 4, Math.max(meta.cols, meta.rows) + 2,
@@ -383,7 +393,7 @@ function buildTerrainChunks(fieldW, fieldD) {
   _terrainEMin = eMin;
   _terrainElevScale = elevScale;
 
-  // PBR: MeshStandardMaterial for terrain — roughness=0.9 for soil, low metalness
+  // PBR: MeshStandardMaterial for terrain - roughness=0.9 for soil, low metalness
   // ponytail: shadows conditionally enabled by qualityEnhanced flag
   const mat = new THREE.MeshStandardMaterial({
     color: 0xC8A97E,
@@ -435,7 +445,7 @@ function updateTerrainLOD() {
 }
 
 // ---------------------------------------------------------------------------
-// Plant geometry factory — cylinder (index=0) or GLTF-sourced BufferGeometry
+// Plant geometry factory - cylinder (index=0) or GLTF-sourced BufferGeometry
 // ---------------------------------------------------------------------------
 
 function _cylinderGeo() {
@@ -443,18 +453,11 @@ function _cylinderGeo() {
 }
 
 function _makePlantMat() {
-  // PBR plant material — instanced colour via instanceColor
-  if (qualityEnhanced) {
-    return new THREE.MeshPhysicalMaterial({
-      roughness: 0.6,
-      metalness: 0.0,
-      transmission: 0.15,
-      thickness: 0.5,
-      ior: 1.4,
-    });
-  }
+  // PBR plant material - instanced colour via instanceColor
+  // ponytail: transmission removed - semi-transparency on instanced meshes
+  // causes ghost/arrow artifacts; standard roughness is sufficient for crops.
   return new THREE.MeshStandardMaterial({
-    roughness: 0.6,
+    roughness: qualityEnhanced ? 0.6 : 0.7,
     metalness: 0.0,
   });
 }
@@ -463,20 +466,15 @@ function initEnhancedRendering(width, height) {
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
+  // SSAO gives soft ambient occlusion depth cues without the
+  // bloom halo that caused terrain glow on bright diffuse surfaces.
+  // ponytail: bloom removed - threshold 0.85 fired on sunlit cream soil;
+  // bloom is correct only for emissive objects (LEDs, headlights, etc.)
   const ssaoPass = new SSAOPass(scene, camera, width, height);
   ssaoPass.kernelRadius = 8;
   ssaoPass.minDistance = 0.001;
   ssaoPass.maxDistance = 0.3;
   composer.addPass(ssaoPass);
-
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(width, height),
-    0.3,
-    0.4,
-    0.85,
-  );
-  composer.addPass(bloomPass);
-  composer.addPass(new OutputPass());
 }
 
 function _installPlantMorphShader(material, geometry) {
@@ -872,7 +870,7 @@ function buildInstancedMesh() {
   mesh = im;   // backward-compat alias for selection/colour helpers
 }
 
-// Async GLTF loader — fires after initScene, adds meshes[model_index] when ready.
+// Async GLTF loader - fires after initScene, adds meshes[model_index] when ready.
 // ponytail: one loader instance, reused for all URIs.
 const _gltfLoader = new GLTFLoader();
 
@@ -900,7 +898,7 @@ async function loadGltfMeshes() {
       meshes[idx] = im;
       console.log(`GLTF loaded: model_index=${idx} uri=${uri}`);
     } catch (e) {
-      console.warn(`GLTF load failed for ${uri}:`, e, '— cylinder fallback active');
+      console.warn(`GLTF load failed for ${uri}:`, e, '- cylinder fallback active');
     }
   }
 }
@@ -909,7 +907,7 @@ async function loadGltfMeshes() {
 // 3. Apply a binary frame to the InstancedMesh
 // ---------------------------------------------------------------------------
 
-// ponytail: LOD distance threshold — beyond this, dead plants are skipped entirely.
+// ponytail: LOD distance threshold - beyond this, dead plants are skipped entirely.
 // Upgrade path: separate billboard InstancedMesh when profiler shows >30% overdraw.
 const _LOD_DEAD_SKIP_SQ = 60 * 60;  // 60 world units squared
 const _RAIN_PARTICLE_COUNT = 6000;
@@ -922,13 +920,14 @@ function showDay(day) {
   currentDay = day;
   const n = meta.n_plants;
   const cols = meta.cols;
-  const minScale = 0.05;
-  const minRadius = 0.08;
+  // ponytail: raised floors - at 0.05/0.08 early seedlings were sub-pixel specks
+  const minScale = 0.20;
+  const minRadius = 0.14;
   const camX = camera.position.x;
   const camZ = camera.position.z;
 
   // Reset per-mesh instance counter (each mesh tracks its own count this frame)
-  // ponytail: use a plain object literal — cheap reset, no allocation.
+  // ponytail: use a plain object literal - cheap reset, no allocation.
   const perMeshCount = {};
   for (const idx of Object.keys(meshes)) perMeshCount[idx] = 0;
 
@@ -1019,7 +1018,7 @@ function showDay(day) {
 
   // HUD
   hudDay.textContent = `Day ${day} / ${meta.days[meta.days.length - 1]}`;
-  hudInfo.textContent = `${n} plants  |  ${meta.rows}×${meta.cols} grid`;
+  hudInfo.textContent = `${n} plants  |  ${meta.rows}x${meta.cols} grid`;
 
   // Notify parent Dash app about day change (for scrubber sync)
   if (window.parent !== window) {
@@ -1032,7 +1031,7 @@ function showDay(day) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Raycasting — click handler
+// 4. Raycasting - click handler
 // ---------------------------------------------------------------------------
 
 function onCanvasClick(event) {
@@ -1112,7 +1111,7 @@ function clearSelection() {
   }
   selectedInstance = -1;
   removeSelectionBox();
-  hudInfo.textContent = `${meta.n_plants} plants  |  ${meta.rows}×${meta.cols} grid`;
+  hudInfo.textContent = `${meta.n_plants} plants  |  ${meta.rows}x${meta.cols} grid`;
 
   // Notify parent to close Panel 4
   if (window.parent !== window) {
@@ -1175,7 +1174,7 @@ function removeSelectionBox() {
 // ---------------------------------------------------------------------------
 
 async function rebuildColour(variable) {
-  loaderStatus.textContent = `Rebuilding colours for ${variable}…`;
+  loaderStatus.textContent = `Rebuilding colours for ${variable}...`;
   loader.style.display = 'flex';
   loader.classList.remove('hidden');
   loaderFill.style.width = '30%';
@@ -1186,7 +1185,7 @@ async function rebuildColour(variable) {
     const result = await r.json();
 
     loaderFill.style.width = '60%';
-    setStatus('Reloading frames…', 60);
+    setStatus('Reloading frames...', 60);
 
     // Re-fetch all frames
     frames = {};
@@ -1219,7 +1218,7 @@ function updateLegendMeta() {
   const v = meta.variable || 'biomass_g';
   const labels = {
     biomass_g: 'Biomass (g/plant)',
-    lai: 'LAI (m²/m²)',
+    lai: 'LAI (m2/m2)',
     weed_lai: 'Weed LAI',
     height_cm: 'Height (cm)',
     stress_index: 'Stress Index',
@@ -1252,14 +1251,14 @@ function startPlayback() {
     showDay(next);
   }, intervalMs);
   playing = true;
-  btnPlay.textContent = '⏸ Pause';
+  btnPlay.textContent = 'Pause';
   btnPlay.classList.add('active');
 }
 
 function stopPlayback() {
   if (playTimer) { clearInterval(playTimer); playTimer = null; }
   playing = false;
-  btnPlay.textContent = '▶ Play';
+  btnPlay.textContent = 'Play';
   btnPlay.classList.remove('active');
 }
 
@@ -1278,13 +1277,13 @@ btn2x.addEventListener('click', () => setSpeed(2));
 btn5x.addEventListener('click', () => setSpeed(5));
 
 // ---------------------------------------------------------------------------
-// Export scene as .glb — captures terrain + plant meshes for current day
+// Export scene as .glb - captures terrain + plant meshes for current day
 // ---------------------------------------------------------------------------
 
 function exportSceneAsGlb() {
   if (!scene) return;
   const exporter = new GLTFExporter();
-  // ponytail: export whole scene; binary=true → single .glb blob
+  // ponytail: export whole scene; binary=true -> single .glb blob
   exporter.parse(
     scene,
     (glb) => {
@@ -1305,7 +1304,7 @@ if (btnExportGlb) btnExportGlb.addEventListener('click', exportSceneAsGlb);
 
 
 // ---------------------------------------------------------------------------
-// 8. postMessage listener (Dash → iframe day sync + plant selection)
+// 8. postMessage listener (Dash -> iframe day sync + plant selection)
 // ---------------------------------------------------------------------------
 
 window.addEventListener('message', (event) => {
@@ -1320,7 +1319,7 @@ window.addEventListener('message', (event) => {
   }
 
   if (event.data.type === 'cf_set_field') {
-    /* PRD v0.2.0 §8 — field selector change triggers a full re-bootstrap.
+    /* PRD v0.2.0 Section8 - field selector change triggers a full re-bootstrap.
        We tear down the existing scene/renderer, show the loader, and
        reload all frames for the new field from the server. */
     const newField = event.data.field;
@@ -1387,12 +1386,14 @@ varSelect.addEventListener('change', () => {
 
 function animate() {
   requestAnimationFrame(animate);
+  // Guard: renderer can be null during field-switch teardown
+  if (!renderer) return;
   if (controls) controls.update();
   updateTerrainLOD();
   _animateRain();
   if (composer) {
     composer.render();
-  } else if (renderer && scene && camera) {
+  } else if (scene && camera) {
     renderer.render(scene, camera);
   }
 }
@@ -1411,4 +1412,6 @@ function onResize() {
 // 10. Start
 // ---------------------------------------------------------------------------
 
-bootstrap(null);
+if (!window.__cfFallbackViewportStarted) {
+  bootstrap(null).catch(failToFallback);
+}
